@@ -82,37 +82,35 @@ def load_study_config(base_path: Path) -> StudyConfig:
     )
 
 
-def collect_config_paths(base_path: Path) -> list[Path]:
-    """Config YAMLs (base + sub-configs). Fixture scenario excluded — see ``collect_fixture_paths``."""
-    base_path = Path(base_path).resolve()
-    root = resolve_repo_root(base_path)
-    base = load_base_config(base_path)
-    return [
-        base_path,
-        root / base.allocation.config,
-        root / base.spending.config,
-        root / base.pe_pacing.config,
-        root / base.scenarios.config,
-    ]
+def _hash_objects_canonical(objects: list[dict]) -> str:
+    """SHA-256 over JSON-canonicalized dicts (sorted keys, fixed indent).
 
-
-def collect_fixture_paths(base_path: Path) -> list[Path]:
-    """Fixture YAMLs the run depends on (currently just the selected scenario)."""
-    base_path = Path(base_path).resolve()
-    root = resolve_repo_root(base_path)
-    base = load_base_config(base_path)
-    return [root / base.fixtures.scenario]
-
-
-def canonicalize_yaml_for_hash(path: Path) -> bytes:
-    """Canonical bytes for hashing: parse YAML, JSON-dump with sorted keys + 2-space indent."""
-    data = _read_yaml(path)
-    return json.dumps(data, sort_keys=True, indent=2, default=str).encode("utf-8")
-
-
-def hash_files(paths: list[Path]) -> str:
-    """SHA-256 over canonicalized concat of files in sorted-by-path order (SPEC §8)."""
+    Object-based hashing makes the hash invariant to whether the inputs
+    came from disk or were synthesized in memory — Phase 2 scenarios
+    perturb configs in memory, so hashing files would miss the override.
+    """
     h = hashlib.sha256()
-    for p in sorted(paths):
-        h.update(canonicalize_yaml_for_hash(p))
+    parts = sorted(json.dumps(d, sort_keys=True, indent=2, default=str) for d in objects)
+    for p in parts:
+        h.update(p.encode("utf-8"))
     return f"sha256:{h.hexdigest()}"
+
+
+def hash_study_config(cfg: StudyConfig) -> tuple[str, str]:
+    """Return ``(config_hash, fixtures_hash)`` from the resolved study config.
+
+    ``config_hash`` covers base + sub-configs (allocation, spending, pe_pacing,
+    scenarios). ``fixtures_hash`` covers the active fixture scenario only.
+    Each is computed from pydantic ``model_dump(mode='json')`` so an
+    in-memory override changes the hash exactly the same way an edited
+    YAML file would.
+    """
+    cfg_objs = [
+        cfg.base.model_dump(mode="json"),
+        cfg.allocation.model_dump(mode="json"),
+        cfg.spending.model_dump(mode="json"),
+        cfg.pe_pacing.model_dump(mode="json"),
+        cfg.scenarios.model_dump(mode="json"),
+    ]
+    fix_objs = [cfg.fixture_scenario.model_dump(mode="json")]
+    return _hash_objects_canonical(cfg_objs), _hash_objects_canonical(fix_objs)

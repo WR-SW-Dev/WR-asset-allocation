@@ -1,21 +1,26 @@
-"""End-to-end Phase 1 run pipeline.
+"""End-to-end run pipeline (Phases 1 + 2).
 
-Loads + validates the study config, builds a quarterly ledger by emitting
-flows in canonical SPEC §5.1 order, validates every invariant, and writes
-``ledger.parquet`` / ``report.md`` / ``manifest.json`` into a per-invocation
-run directory under ``data/processed/runs/<run_id>/``.
+Loads + validates the study config, optionally applies a Phase 2 ``Scenario``
+override, builds a quarterly ledger by emitting flows in canonical SPEC §5.1
+order, validates every invariant, and writes ``ledger.parquet`` /
+``report.md`` / ``manifest.json`` into a per-invocation run directory under
+``data/processed/runs/<run_id>/``.
 
 ``run_id`` = ``aa-<cfg_hash[:12]>-<fix_hash[:12]>-<UTC_ts>-<nonce>``. The
-hash segments are deterministic in the inputs; the timestamp + nonce make
-each invocation unique so reruns never overwrite a prior dir (SPEC §8).
-Determinism applies to ledger *content*: two runs of the same config produce
-parquets that are byte-identical once the ``run_id`` column is dropped.
+hash segments are deterministic in the resolved configs (object-based hash,
+robust to in-memory scenario overrides); the timestamp + nonce make each
+invocation unique so reruns never overwrite a prior dir (SPEC §8).
+
+Scenarios are inputs, not branches — the orchestrator never inspects
+``scenario.name``. It just applies overrides via ``cfg.model_copy(update=...)``
+and runs the same code path.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
@@ -28,9 +33,7 @@ from aa_model.integration.ledger import QuarterlyLedger
 from aa_model.integration.manifest import Manifest, make_run_id, utcnow_iso
 from aa_model.integration.report import write_markdown_report
 from aa_model.io.loaders import (
-    collect_config_paths,
-    collect_fixture_paths,
-    hash_files,
+    hash_study_config,
     load_study_config,
     resolve_repo_root,
 )
@@ -39,6 +42,9 @@ from aa_model.io.validation import validate_study_config
 from aa_model.pe.pacing import project_horizon
 from aa_model.spending.base import SpendingParams
 from aa_model.spending.rules import make_rule
+
+if TYPE_CHECKING:
+    from aa_model.assumptions.scenario_builder import Scenario
 
 
 @dataclass(frozen=True)
@@ -54,14 +60,16 @@ def run_orchestrator(
     *,
     dry_run: bool = False,
     invocation_id: str | None = None,
+    scenario: Scenario | None = None,
 ) -> RunResult:
     base_config_path = Path(base_config_path).resolve()
     repo_root = resolve_repo_root(base_config_path)
     cfg = load_study_config(base_config_path)
+    if scenario is not None:
+        cfg = _apply_scenario(cfg, scenario)
     validate_study_config(cfg)
 
-    config_hash = hash_files(collect_config_paths(base_config_path))
-    fixtures_hash = hash_files(collect_fixture_paths(base_config_path))
+    config_hash, fixtures_hash = hash_study_config(cfg)
     run_id = make_run_id(config_hash, fixtures_hash, invocation_id=invocation_id)
 
     started_at = utcnow_iso()
@@ -269,3 +277,19 @@ def _write_ledger_parquet(df: pd.DataFrame, path: Path) -> None:
         index=False,
         compression=None,
     )
+
+
+def _apply_scenario(cfg: StudyConfig, scenario: Scenario) -> StudyConfig:
+    """Apply scenario overrides to a resolved StudyConfig.
+
+    Pure data substitution — no orchestrator branching on scenario identity.
+    Any field on ``scenario`` set to None is left at the base value.
+    """
+    updates: dict = {}
+    if scenario.fixture_scenario is not None:
+        updates["fixture_scenario"] = scenario.fixture_scenario
+    if scenario.pe_pacing is not None:
+        updates["pe_pacing"] = scenario.pe_pacing
+    if scenario.spending is not None:
+        updates["spending"] = scenario.spending
+    return cfg.model_copy(update=updates) if updates else cfg
