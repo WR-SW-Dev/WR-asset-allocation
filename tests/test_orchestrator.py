@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 
+import pandas as pd
 from aa_model.integration.orchestrator import run_orchestrator
 
 _ALLOWED_FLOW_TYPES = {
@@ -58,6 +59,43 @@ def test_dry_run_writes_no_artifacts(base_config_path):
     # We assert no ledger.parquet was written by THIS dry-run; if a prior
     # non-dry run created one earlier in the test suite we leave it alone.
     assert result.manifest.outputs == []
+
+
+def test_pe_call_and_distribution_have_matching_cash_offsets(base_config_path):
+    """Per SPEC §5.1 total NAV conservation, every pe_call / pe_distribution row
+    on a non-cash bucket must be paired by an equal-magnitude opposite-sign
+    row on the cash bucket carrying the same source. The ledger.validate()
+    zero-sum check catches aggregate violations; this test pins the
+    *per-source* pairing to catch a swapped-sign or missing-leg bug that
+    happens to net to zero across funds.
+    """
+    result = run_orchestrator(base_config_path, dry_run=False)
+    df = result.ledger
+
+    # The cash leg always carries the opposite sign of the PE leg:
+    #   pe_call:         pe = +call,  cash = -call
+    #   pe_distribution: pe = -dist,  cash = +dist
+    for ftype in ("pe_call", "pe_distribution"):
+        sub = df[df["flow_type"] == ftype]
+        if sub.empty:
+            continue
+        pe_side = sub[sub["bucket"] != "cash"]
+        cash_side = sub[sub["bucket"] == "cash"]
+        # 1-to-1 row count: each non-cash leg has exactly one cash counterpart.
+        assert len(pe_side) == len(
+            cash_side
+        ), f"{ftype}: {len(pe_side)} non-cash rows vs {len(cash_side)} cash rows"
+        # Pairing key: (quarter, source). Cash row's amount must be the
+        # negation of the corresponding non-cash row's amount.
+        key = ["quarter", "source"]
+        pe_amt = pe_side.groupby(key)["amount_usd"].sum().rename("pe_amt")
+        cash_amt = cash_side.groupby(key)["amount_usd"].sum().rename("cash_amt")
+        joined = pd.concat([pe_amt, cash_amt], axis=1)
+        assert not joined.isna().any().any(), f"{ftype}: orphan rows without pair"
+        diff = (joined["cash_amt"] + joined["pe_amt"]).abs()
+        assert (
+            diff < 1e-9
+        ).all(), f"{ftype}: per-source cash offset asymmetry, max |diff|={diff.max()}"
 
 
 def test_input_hashes_are_deterministic_run_ids_are_unique(base_config_path):
