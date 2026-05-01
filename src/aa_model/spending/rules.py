@@ -76,4 +76,10 @@ def make_rule(name: str) -> SpendingRule:
         return FlatRealRule()
     if name == "smoothing":
         return SmoothingRule()
+    if name == "owl":
+        # Local import to avoid a circular dependency: owl_adapter imports
+        # SpendingRule from .base; this module also imports from .base.
+        from aa_model.spending.owl_adapter import OwlRule
+
+        return OwlRule()
     raise ValueError(f"unknown spending rule {name!r}")

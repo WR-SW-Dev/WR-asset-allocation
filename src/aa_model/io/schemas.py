@@ -153,19 +153,46 @@ class SmoothingConfig(BaseModel):
     weight: float = Field(ge=0.0, le=1.0)
 
 
+class GuardrailConfig(BaseModel):
+    """Phase 3c — config for the Owl (Guyton-Klinger style) guardrail rule.
+
+    Bands are expressed as fractional deviations from the *initial* withdrawal
+    rate (annual_spend / initial_nav at run start). The guardrail check fires
+    only at year boundaries, after applying inflation:
+
+    * if rate < initial_rate · (1 - lower_band_pct) → raise spending by raise_pct
+    * if rate > initial_rate · (1 + upper_band_pct) → cut spending by cut_pct
+    * otherwise spending stays at the inflation-adjusted prior level
+
+    NAV used for the rate check is forecast deterministically from
+    ``forecast_quarterly_return_pct`` — Owl does NOT see realized
+    NAV (see L15).
+    """
+
+    model_config = _STRICT
+    upper_band_pct: float = Field(gt=0.0)  # cut trigger
+    lower_band_pct: float = Field(gt=0.0)  # raise trigger
+    raise_pct: float = Field(gt=0.0)
+    cut_pct: float = Field(gt=0.0, lt=1.0)  # cut < 100% (cannot zero out spending)
+    forecast_quarterly_return_pct: float = 0.0
+
+
 class SpendingConfig(BaseModel):
     model_config = _STRICT
-    rule: Literal["flat_real", "smoothing"]
+    rule: Literal["flat_real", "smoothing", "owl"]
     annual_spend_usd: float = Field(ge=0.0)
     inflation_pct: float
     smoothing: SmoothingConfig
     floor_usd: float = Field(ge=0.0)
     ceiling_usd: float = Field(ge=0.0)
+    guardrail: GuardrailConfig | None = None
 
     @model_validator(mode="after")
-    def _floor_le_ceiling(self) -> SpendingConfig:
+    def _checks(self) -> SpendingConfig:
         if self.floor_usd > self.ceiling_usd:
             raise ValueError(f"floor_usd ({self.floor_usd}) > ceiling_usd ({self.ceiling_usd})")
+        if self.rule == "owl" and self.guardrail is None:
+            raise ValueError("rule='owl' requires spending.guardrail config")
         return self
 
 

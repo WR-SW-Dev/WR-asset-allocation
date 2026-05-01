@@ -124,6 +124,22 @@ def test_cvxportfolio_engine_preserves_invariants_under_nonzero_bps(
     assert 0.0 < cum_cost < 1_000_000.0
 
 
+def test_owl_spending_rule_preserves_invariants_end_to_end(with_owl_spending_config):
+    """Phase 3c end-to-end: switching spending.rule to 'owl' with a guardrail
+    block must not break any ledger invariant. spend rows are still the
+    canonical external-outflow channel (no schema change needed for Owl).
+    """
+    result = run_orchestrator(with_owl_spending_config, dry_run=False)
+    df = result.ledger
+    spend = df[df["flow_type"] == "spend"]
+    # Spending rows are present, on cash, all non-positive (outflows).
+    assert not spend.empty
+    assert (spend["bucket"] == "cash").all()
+    assert (spend["amount_usd"] <= 0.0).all()
+    # One spend row per quarter.
+    assert spend.groupby("quarter").size().max() == 1
+
+
 def test_input_hashes_are_deterministic_run_ids_are_unique(base_config_path):
     r1 = run_orchestrator(base_config_path, dry_run=True)
     r2 = run_orchestrator(base_config_path, dry_run=True)

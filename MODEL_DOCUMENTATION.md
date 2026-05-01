@@ -268,8 +268,47 @@ Behind `SpendingRule` (SPEC §9):
   (equivalent to flat-real); `w = 0` freezes spending at the initial target
   and never re-anchors to inflation; intermediate `w` produces an
   exponentially-weighted lag toward target.
+* `OwlRule` (Phase 3c, project codename for the Guyton-Klinger guardrail
+  rule; lives at `spending/owl_adapter.py` for §4-layout consistency) —
+  ```
+  initial_rate    = annual_spend_0 / initial_nav_total
+  forecast_nav_t  = initial_nav_total · (1 + forecast_quarterly_return_pct)^t
 
-`make_rule(name)` is the factory.
+  for each year boundary  (t > 0, t % 4 == 0):
+      annual_spend_t  = annual_spend_{t-1} · (1 + inflation_pct)        # inflation step
+      current_rate    = annual_spend_t / forecast_nav_t
+      if current_rate < initial_rate · (1 - lower_band_pct):
+          annual_spend_t *= (1 + raise_pct)                              # ratchet up
+      elif current_rate > initial_rate · (1 + upper_band_pct):
+          annual_spend_t *= (1 - cut_pct)                                # ratchet down
+
+  within a year  (t % 4 != 0):
+      annual_spend stays at year's level
+  quarterly_t       = annual_spend_t / 4    (then floor / ceiling clipped)
+  ```
+  Guardrail bands and ratchet sizes come from a new
+  `GuardrailConfig` block in `spending.guardrail`; cross-config validation
+  rejects `rule = owl` without it. Owl is **not** an external library
+  adapter — it is the canonical implementation of the missing
+  `guardrail` rule referenced in SPEC §4 layout.
+
+`make_rule(name)` is the factory; for `name == "owl"` it imports
+`OwlRule` lazily from `spending/owl_adapter.py` to avoid circular
+imports between `rules.py` and `owl_adapter.py`.
+
+#### Spending-rule comparison
+
+| | flat_real | smoothing | owl |
+|---|---|---|---|
+| precomputed at run start | yes | yes | yes |
+| inflation-adjusted target | yes | yes | yes (year-by-year) |
+| within-year constancy | yes (4q identical) | no (quarterly EWMA) | yes (4q identical) |
+| path-dependent | no | yes (1-step back on `spend_{t-1}`) | yes (1-step back on year-prior `annual_spend`) |
+| reads ledger NAV | no | no | reads `ledger.initial_nav` only |
+| reacts to realized NAV | no | no | **no** — uses `forecast_quarterly_return_pct` (see L15) |
+| reacts to scenario shocks | no | no | **no** — see L15 |
+| invariant under NAV scaling | yes (config-driven) | yes (config-driven) | yes — see L16 |
+| extra config required | none | `smoothing.weight` | `guardrail` block (5 fields) |
 
 Liquidity metrics (`spending/liquidity.py`) are derived from the ledger
 DataFrame after the run completes — no shadow state, no rolling tracker:
@@ -637,6 +676,48 @@ output. Each entry separates **model behavior** (what the code does) from
   Treat this as a Phase 4+ task and a hard prerequisite, not an
   optimization to add later.
 
+### L15 — Owl reacts to forecasted NAV, not realized NAV
+
+* **Model behavior.** `OwlRule` computes its guardrail trigger against a
+  deterministic forward NAV forecast
+  `initial_nav · (1 + forecast_quarterly_return_pct)^t`. It does **not**
+  read realized end-of-quarter NAV from the ledger — the
+  `SpendingRule.quarterly_outflows` API is called once at run start with
+  an empty ledger and returns the full horizon's spending series in one
+  shot.
+* **Real-world interpretation.** Real Guyton-Klinger guardrails react to
+  the realized portfolio path: a drawdown that pushes the rate above the
+  upper band triggers a cut **at that quarter**. Owl's forecasted-NAV
+  approach gives the same answer ONLY when the forecast matches reality —
+  fine for the deterministic base scenario where forecast and realized
+  bucket-weighted return roughly coincide, materially wrong for shock
+  scenarios (`public_drawdown` etc.) where Owl will keep ratcheting on
+  its smooth forecast while the actual portfolio is in drawdown. To get
+  realized-NAV feedback, the orchestrator's "one forward pass per
+  quarter, no backfills" rule (Phase 2 close-out) would need a
+  per-quarter spending callback added to the `SpendingRule` ABC and a
+  matching iterative loop in the orchestrator. Deferred: this is the
+  same architectural lift L13 names (cost-aware optimizer feedback) and
+  should land together with it as a single Phase 4+ "iterative
+  per-quarter rule" upgrade.
+
+### L16 — Owl is scale-invariant in initial NAV
+
+* **Model behavior.** Doubling `initial_nav_total` produces an
+  **identical** Owl spending series. The trigger condition
+  `current_rate ≷ initial_rate · (1 ± band)` reduces algebraically to
+  `annual_spend(t) ≷ annual_spend_0 · (1 ± band) · (1+g)^t` — initial
+  NAV cancels. Tested directly in
+  `tests/test_owl_adapter.py::test_owl_path_is_scale_invariant_in_initial_nav`.
+* **Real-world interpretation.** This is a real-world weakness: a $100M
+  household and a $1B household with the same initial spending rate
+  (4%), inflation, bands, and forecast assumptions get the **same
+  spending decisions** through Owl. In reality the larger household has
+  more room to absorb a band breach without triggering a cut. The
+  invariance is a direct consequence of using rates rather than
+  absolute dollar guardrails; switching to an absolute-dollar guardrail
+  is a real-world refinement but doesn't qualify as Phase 3c minimum.
+
 ### L14 — Only linear transaction cost is modeled
 
 * **Model behavior.** `cost_usd = (bps_per_trade / 1e4) · ∑ |trade|`.
@@ -921,6 +1002,72 @@ what changed, why, impact on outputs, backward-compatibility flag.
   updates this file from now on; entries are appended, never rewritten.
 * **Impact on outputs.** None.
 * **Backward-compatible.** Yes.
+
+### 2026-05-01 — Phase 3c / Owl guardrail spending rule
+
+* **What.**
+  * **Disambiguation.** "Owl" is not an external library — no PyPI
+    package matches the SFO spending domain (the lone `owl` package is
+    a Falcon API monitoring library). Per user direction, Owl is the
+    project codename for the **Guyton-Klinger guardrail rule** missing
+    from `spending/rules.py`'s type comment. The implementation lives
+    at `spending/owl_adapter.py` for §4-layout consistency.
+  * New `OwlRule` (subclass of `SpendingRule`):
+    inflation-adjust at year boundaries, then check rate vs initial
+    rate against `lower_band_pct` (raise trigger) and `upper_band_pct`
+    (cut trigger); ratchet ±`raise_pct` / `cut_pct` on trigger; within-
+    year constancy. NAV used in the rate check is forecasted from
+    `forecast_quarterly_return_pct`; Owl does not read realized NAV
+    (see L15).
+  * **Schema.** New `GuardrailConfig` (5 fields:
+    `upper_band_pct`, `lower_band_pct`, `raise_pct`, `cut_pct`,
+    `forecast_quarterly_return_pct`); added to `SpendingConfig` as
+    optional `guardrail`. Cross-config validation rejects
+    `rule = owl` without `guardrail`.
+  * **Factory.** `make_rule("owl") → OwlRule` with a deferred import
+    inside the factory to avoid a circular import between
+    `spending/rules.py` and `spending/owl_adapter.py`.
+  * **Numerical anchor (hand-worked Guyton-Klinger trip).** Initial
+    $4M annual spend, $100M NAV (rate 4%), 4%/q forecast growth, 20%
+    bands, 10% raise. At q8: forecast NAV = $100M·(1.04)^8 =
+    $136,856,905; annual spend after two inflation steps =
+    $4M·(1.025)^2 = $4,202,500; rate = 3.0707% < 4%·(1−0.20) = 3.20%
+    → raise triggers; new annual = $4,202,500·1.10 = $4,622,750;
+    quarterly = **$1,155,687.50**. Tested to `1e-9` USD.
+  * **Comparability tests.** Owl with bands so wide they never
+    trigger reduces exactly to `FlatRealRule` for the same horizon
+    (degenerate parity); Owl with active bands diverges from
+    `SmoothingRule(weight=1)` (which is itself flat-real-equivalent).
+  * **Boundary tests.** Cut trigger fires under negative forecast
+    (verified: forecast = −5%/q → rate breaches upper band at q4 → cut
+    to $922,500/q); within-year-constant; deterministic across runs;
+    no NaN / no negative spending; floor/ceiling clip applied.
+  * **End-to-end.** New orchestrator-level test
+    (`test_owl_spending_rule_preserves_invariants_end_to_end`) runs
+    the full base scenario with `rule=owl` + a guardrail block;
+    asserts spend rows still emit on cash, all non-positive, one per
+    quarter — i.e. Owl is invisible to the rest of the system as a
+    spending source.
+* **Why.** Phase 3c spec brief — first non-stub `SpendingRule` behind
+  the ABC, intentionally path-dependent (per the user's prompt). Same
+  discipline guardrails as P3a/P3b: pure rule, no shared state, no
+  ledger mutation, no lookahead, structural parity + numerical anchor,
+  documented path dependence, MODEL_DOCUMENTATION update gating
+  completion.
+* **Impact on outputs.**
+  * Default config (`spending.rule: flat_real`) is unaffected. All 83
+    prior tests still pass.
+  * Setting `spending.rule: owl` with a guardrail block produces a
+    spending trajectory that matches `flat_real` until a guardrail
+    band is breached (against forecast NAV), then ratchets up or down
+    by `raise_pct` / `cut_pct` and stays there until the next year
+    boundary.
+  * 19 new tests in `tests/test_owl_adapter.py` + 1 orchestrator-level
+    test. Total suite: **103 passed**.
+* **Backward-compatible.** Yes for the public API. The schema gained
+  `guardrail` as optional on `SpendingConfig`; existing configs without
+  it validate unchanged. `Literal["flat_real", "smoothing"]` widened to
+  include `"owl"` (forward-compatible).
 
 ### 2026-05-01 — Phase 3b post-audit doc clarifications
 
