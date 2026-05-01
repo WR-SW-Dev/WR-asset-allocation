@@ -167,6 +167,15 @@ class GuardrailConfig(BaseModel):
     NAV used for the rate check is forecast deterministically from
     ``forecast_quarterly_return_pct`` — Owl does NOT see realized
     NAV (see L15).
+
+    ``forecast_quarterly_return_pct`` is an **exogenous assumption
+    supplied by the user via config**. It is *not* derived from the
+    fixture scenario's per-bucket return rates, the CMA, or any
+    scenario perturbation. Two runs with different actual return paths
+    (e.g. ``base`` vs ``public_drawdown``) but the same
+    ``forecast_quarterly_return_pct`` produce identical Owl spending
+    series. See L15 for why this is the Phase 3c minimum and what
+    Phase 4+ would change.
     """
 
     model_config = _STRICT
@@ -174,7 +183,13 @@ class GuardrailConfig(BaseModel):
     lower_band_pct: float = Field(gt=0.0)  # raise trigger
     raise_pct: float = Field(gt=0.0)
     cut_pct: float = Field(gt=0.0, lt=1.0)  # cut < 100% (cannot zero out spending)
-    forecast_quarterly_return_pct: float = 0.0
+    forecast_quarterly_return_pct: float = Field(
+        default=0.0,
+        description=(
+            "Exogenous user assumption for Owl's forward NAV forecast. "
+            "Not derived from scenarios or CMA. See L15."
+        ),
+    )
 
 
 class SpendingConfig(BaseModel):

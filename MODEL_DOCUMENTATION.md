@@ -337,7 +337,7 @@ imports between `rules.py` and `owl_adapter.py`.
 | path-dependent | no | yes (1-step back on `spend_{t-1}`) | yes (1-step back on year-prior `annual_spend`) |
 | reads ledger NAV | no | no | reads `ledger.initial_nav` only |
 | reacts to realized NAV | no | no | **no** — uses `forecast_quarterly_return_pct` (see L15) |
-| reacts to scenario shocks | no | no | **no** — see L15 |
+| reacts to scenario shocks | no | no | **no** — `forecast_quarterly_return_pct` is exogenous, not scenario-derived (L15) |
 | invariant under NAV scaling | yes (config-driven) | yes (config-driven) | yes — see L16 |
 | extra config required | none | `smoothing.weight` | `guardrail` block (5 fields) |
 
@@ -716,6 +716,14 @@ output. Each entry separates **model behavior** (what the code does) from
   `SpendingRule.quarterly_outflows` API is called once at run start with
   an empty ledger and returns the full horizon's spending series in one
   shot.
+* **`forecast_quarterly_return_pct` is exogenous.** The forecast rate
+  is supplied by the user via `spending.guardrail.forecast_quarterly_return_pct`.
+  It is **not** derived from fixture returns, the CMA, or scenario
+  perturbations. Two runs with different realized return paths
+  (e.g. `base` vs `public_drawdown`) but the same forecast assumption
+  produce **identical** Owl spending series. Reading the parameter as
+  "Owl's view of the future" rather than "the model's expected return"
+  is the right mental model.
 * **Real-world interpretation.** Real Guyton-Klinger guardrails react to
   the realized portfolio path: a drawdown that pushes the rate above the
   upper band triggers a cut **at that quarter**. Owl's forecasted-NAV
@@ -731,6 +739,27 @@ output. Each entry separates **model behavior** (what the code does) from
   same architectural lift L13 names (cost-aware optimizer feedback) and
   should land together with it as a single Phase 4+ "iterative
   per-quarter rule" upgrade.
+
+### Forward-risk note — two parallel approximations awaiting Phase 4
+
+The system now carries two independent NAV/cost-blind approximations
+that both defer to a future iterative-per-quarter rule pass:
+
+* **Allocation side (L13).** `cvxportfolio` is wired as an executor
+  only — trades = target − current; no cost-aware optimization. Cost
+  does not influence the trade decision.
+* **Spending side (L15).** `OwlRule` reads only forecast NAV; cannot
+  see realized portfolio drawdowns or scenario-driven NAV deviations.
+
+Either approximation is acceptable in isolation. The risk is that
+they would need to be lifted **together**: a cost-aware allocator
+that defers trades until cost falls below the marginal-drift benefit
+implies a non-deterministic trade vector mid-run, which then changes
+realized NAV, which a NAV-aware Owl would then react to — so a
+half-fix (e.g., cost-aware allocator without realized-NAV Owl) would
+introduce a feedback loop the spending side ignores. Plan to lift L13
+and L15 in a single Phase 4 "iterative per-quarter rule" pass; do not
+ship one without the other.
 
 ### L16 — Owl is scale-invariant in initial NAV
 
@@ -1032,6 +1061,30 @@ what changed, why, impact on outputs, backward-compatibility flag.
 * **Why.** User directive — every commit that changes model behavior
   updates this file from now on; entries are appended, never rewritten.
 * **Impact on outputs.** None.
+* **Backward-compatible.** Yes.
+
+### 2026-05-01 — P3c post-audit doc clarifications
+
+* **What.** Two tightenings landed together per the Phase 3c audit:
+  1. `forecast_quarterly_return_pct` is now explicitly documented as
+     an **exogenous user assumption** that is *not* derived from
+     fixture returns, the CMA, or scenario perturbations. Two runs
+     with different realized return paths but the same forecast
+     assumption produce identical Owl spending series. The note lives
+     in three places: the `GuardrailConfig` docstring + Field
+     description, the `OwlRule` module docstring, and L15.
+  2. New §Known Limitations *Forward-risk note* between L15 and L16
+     formalizes the two parallel approximations now in the system —
+     allocation side (L13) is cost-unaware, spending side (L15) is
+     NAV-unaware — and binds them as a single Phase 4 "iterative
+     per-quarter rule" lift. Shipping a half-fix (one without the
+     other) would introduce a feedback loop the unfixed side ignores.
+* **Why.** Audit observation that the forecast parameter would be
+  read as "scenario-aware" without an explicit exogeneity note, and
+  that the L13 / L15 deferral pair is now a cross-component constraint
+  that needs to be visible at the limitation level, not just buried
+  in individual phase change-log entries.
+* **Impact on outputs.** None (docs only).
 * **Backward-compatible.** Yes.
 
 ### 2026-05-01 — Adapter discipline contract codified

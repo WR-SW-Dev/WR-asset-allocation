@@ -40,6 +40,12 @@ no NAV feedback from the realized run — Owl computes its own
 forward-only NAV forecast from ``forecast_quarterly_return_pct`` and
 ``initial_nav`` (see L15 for why).
 
+``forecast_quarterly_return_pct`` is an **exogenous assumption** supplied
+by config; it does NOT derive from fixture returns, the CMA, or any
+scenario perturbation. Two runs with different realized return paths
+(e.g. ``base`` vs ``public_drawdown``) but the same forecast assumption
+produce identical Owl spending series.
+
 The rule is therefore a **pure function** of
 ``(initial_nav, SpendingConfig + GuardrailConfig, num_quarters,
 start_quarter)``: same inputs → same output series. No randomness, no
