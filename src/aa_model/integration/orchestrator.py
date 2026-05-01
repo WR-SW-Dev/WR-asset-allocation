@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 from aa_model.allocation.constraints import Constraints
-from aa_model.allocation.stub import StubAllocator
+from aa_model.allocation.factory import make_allocator
 from aa_model.assumptions.cma import CMA
 from aa_model.implementation.base import CostModel
 from aa_model.implementation.stub import StubImplementation
@@ -131,7 +131,7 @@ def _build_ledger(cfg: StudyConfig, run_id: str) -> tuple[QuarterlyLedger, dict[
         SpendingParams(config=cfg.spending, start_quarter=start_q, num_quarters=n_q),
     )
 
-    alloc = StubAllocator(cfg.allocation)
+    alloc = make_allocator(cfg.allocation, engine=cfg.base.allocation.engine)
     alloc.fit(returns=pd.DataFrame(), cma=CMA(), constraints=Constraints())
     target_weights = alloc.weights()
     impl = StubImplementation()

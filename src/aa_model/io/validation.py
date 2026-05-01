@@ -8,15 +8,19 @@ from __future__ import annotations
 
 from aa_model.io.schemas import StudyConfig
 
+_KNOWN_ENGINES: frozenset[str] = frozenset({"stub", "riskfolio"})
+
 
 def validate_study_config(cfg: StudyConfig) -> None:
     """Raise ``ValueError`` on cross-config invariant violations."""
 
-    # Phase 1 only supports the stub allocator.
-    if cfg.base.allocation.engine != "stub":
+    # Engine must be one of the wired adapters. Schema-level Literal already
+    # enforces this; check is repeated here so cross-config validation gives
+    # a single, predictable failure mode.
+    if cfg.base.allocation.engine not in _KNOWN_ENGINES:
         raise ValueError(
-            f"Phase 1 supports only allocation.engine = 'stub'; "
-            f"got {cfg.base.allocation.engine!r}"
+            f"unsupported allocation.engine: {cfg.base.allocation.engine!r}; "
+            f"known: {sorted(_KNOWN_ENGINES)}"
         )
 
     stub_buckets = set(cfg.allocation.stub_weights)

@@ -72,7 +72,9 @@ class HorizonConfig(BaseModel):
 class AllocationRefConfig(BaseModel):
     model_config = _STRICT
     # Phase 1 supports only the stub. Phase 3 widens this Literal.
-    engine: Literal["stub"]
+    # Stub is the Phase 1 reference implementation; "riskfolio" was added in
+    # Phase 3a behind an opt-in flag. New engines extend this Literal.
+    engine: Literal["stub", "riskfolio"]
     config: str
 
 

@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  test:
+  core:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -52,3 +52,37 @@ jobs:
           pd.testing.assert_frame_equal(d1, d2)
           print("determinism OK: ledger content byte-identical across distinct run dirs")
           PY
+
+  adapters:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: core
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install with riskfolio extra
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install -e ".[riskfolio]"
+
+      - name: Riskfolio parity test (Phase 3a)
+        run: |
+          pytest -q tests/test_riskfolio_adapter.py
+
+      - name: End-to-end run with engine=riskfolio
+        run: |
+          cp configs/base.yaml configs/_ci_riskfolio.yaml
+          sed -i 's|  engine: stub|  engine: riskfolio|' configs/_ci_riskfolio.yaml
+          python scripts/run_sfo_study.py --config configs/_ci_riskfolio.yaml
+          rm configs/_ci_riskfolio.yaml
