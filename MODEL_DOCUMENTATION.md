@@ -228,6 +228,29 @@ When `cost_usd > 0`, the orchestrator emits a single
 cash for the quarter then includes this row alongside `inflow` and
 `spend` (see Core Invariants §5).
 
+#### transaction_cost classification — load-bearing decision
+
+> `transaction_cost` is modeled as an external cash outflow.
+>
+> **Rationale**
+> - brokerage fees leave the portfolio to a third party
+> - this preserves the invariant: NAV changes only via market P&L
+>   and external cash flows
+> - treating costs as internal leakage would break deterministic NAV
+>   reconciliation
+>
+> **Implication**
+> - reported returns are net of costs
+> - external cash accounting includes both spending and transaction
+>   costs
+>
+> **Stability commitment**
+> Do NOT reclassify `transaction_cost` as internal leakage in a future
+> phase unless the §Core Invariants block is redesigned globally and
+> all external-tie-out / NAV-conservation tests are updated together.
+> A piecemeal change here would silently invalidate every prior run's
+> reconciliation, including this commit's numerical anchor.
+
 ### Spending / Liquidity
 
 Behind `SpendingRule` (SPEC §9):
@@ -473,6 +496,11 @@ output. Each entry separates **model behavior** (what the code does) from
   configuration to "stress integration logic" by including PE in the
   target weights. A realistic Phase 3+ implementation would treat PE
   positions as fixed-weight or have a separate PE-rebalance gate.
+* **Pairing.** This limitation is **tightly coupled to L14** — fixing
+  PE liquidity without simultaneously upgrading the cost model
+  (PE secondaries cost 5–25% in real markets, not bps) would replace
+  one unrealistic regime with another. L8 and L14 must move together
+  when this part of the system gets serious.
 
 ### L9 — Heavy install footprint for `riskfolio` extra
 
@@ -588,11 +616,26 @@ output. Each entry separates **model behavior** (what the code does) from
   across runs and across engines: switching from `stub` to
   `cvxportfolio` at zero bps produces byte-identical ledger content
   (same trades, same `cost_usd = 0`); switching at non-zero bps adds
-  exactly the linear cost rows and nothing else. Multi-period
-  cvxportfolio is a Phase 4 candidate; before turning it on the
-  orchestrator's "one forward pass per quarter, no backfills, no
-  retroactive mutation" rule (Phase 2 close-out) must be reconciled
-  with cvxportfolio's lookahead horizon.
+  exactly the linear cost rows and nothing else.
+* **Forward risk — cost / rebalance feedback loop.** The current
+  pipeline computes trades first and applies cost after. A real
+  cost-aware optimizer (Single- or Multi-Period Optimization with a
+  cost penalty) would let cost *influence the trade itself* — produce
+  a smaller, partial rebalance when cost exceeds the drift correction's
+  marginal benefit. Wiring that in requires resolving two open
+  questions before any code change:
+  1. The Phase 2 "one forward pass per quarter, no backfills, no
+     retroactive mutation" rule must be reconciled with the
+     optimizer's lookahead horizon (multi-period sees future
+     quarters; the orchestrator only writes the current one).
+  2. The numerical anchor at zero bps stops being the right test —
+     a cost-aware optimizer with bps=0 still reduces to "trade to
+     target," but with bps>0 the trade vector itself diverges from
+     the stub. New anchors will be needed (likely fixed
+     `(current, target, bps, cost-penalty)` tuples with a known
+     optimal partial-trade vector).
+  Treat this as a Phase 4+ task and a hard prerequisite, not an
+  optimization to add later.
 
 ### L14 — Only linear transaction cost is modeled
 
@@ -606,11 +649,15 @@ output. Each entry separates **model behavior** (what the code does) from
   position sizes our toy fixture exercises (~$2–25M per trade vs.
   market depth of $100M+). PE rebalances would be wildly mispriced —
   a $20M PE secondary trade has a discount in the 5–25% range, not
-  bps. The model still treats PE as fully liquid (see L8); fixing
-  L8 and L14 together is the right approach when this part of the
-  system gets serious. The exit-gate test
+  bps. The exit-gate test
   (`test_cvxportfolio_engine_preserves_invariants_under_nonzero_bps`)
   asserts *invariant preservation*, not *cost realism*.
+* **Pairing.** Tightly coupled to **L8** (rebalancer treats PE as a
+  liquid sleeve). Fixing L14 alone — adding per-bucket bps with PE
+  at 1500 bps — would surface the L8 fiction (rebalancer freely
+  selling PE) as a 15% drag every quarter; that's worse than the
+  current uniform-bps regime. L8 and L14 must move together: a real
+  PE-aware rebalance gate first, then per-bucket cost rates.
 
 ---
 
@@ -873,6 +920,44 @@ what changed, why, impact on outputs, backward-compatibility flag.
 * **Why.** User directive — every commit that changes model behavior
   updates this file from now on; entries are appended, never rewritten.
 * **Impact on outputs.** None.
+* **Backward-compatible.** Yes.
+
+### 2026-05-01 — Phase 3b post-audit doc clarifications
+
+* **What.** Three documentation tightenings landed together per the
+  Phase 3b audit:
+  1. **transaction_cost classification** — the implementation
+     subsection now carries an explicit *Rationale / Implication /
+     Stability commitment* block stating that
+     `transaction_cost` is modeled as an external cash outflow, why
+     (NAV-conservation invariant preservation; deterministic
+     reconciliation; net-of-cost reported returns), and the binding
+     instruction not to reclassify it without a global redesign of
+     §Core Invariants and all external-tie-out / NAV-conservation
+     tests.
+  2. **L8 + L14 explicitly paired.** Both limitations now name each
+     other and call out that they must move together when PE
+     liquidity / cost realism is upgraded. Fixing L14 alone (e.g.
+     per-bucket bps with PE at 1500 bps) would surface L8's
+     fiction as a 15%/quarter drag and is therefore worse than the
+     status quo.
+  3. **L13 forward risk — cost/rebalance feedback loop.** L13 now
+     names the two open questions that any cost-aware optimizer
+     wiring (Single- or Multi-Period Optimization with a cost
+     penalty) must resolve before code changes:
+     - reconcile the Phase 2 "one forward pass per quarter, no
+       backfills, no retroactive mutation" rule with the
+       optimizer's lookahead horizon;
+     - replace the bps=0 stub-parity anchor with anchors valid
+       under non-trivial trade-vs-target divergence (likely fixed
+       `(current, target, bps, cost-penalty)` tuples with known
+       optimal partial-trade vectors).
+* **Why.** Phase 3b audit observation that "defensible interpretation"
+  was too soft a framing for a load-bearing accounting decision, and
+  that the future risks (cost feedback loop; PE liquidity/cost
+  mismatch) needed to be encoded next to the limitations they govern,
+  not lost in commit text.
+* **Impact on outputs.** None (docs-only).
 * **Backward-compatible.** Yes.
 
 ### 2026-05-01 — Phase 3b / Cvxportfolio implementation adapter
