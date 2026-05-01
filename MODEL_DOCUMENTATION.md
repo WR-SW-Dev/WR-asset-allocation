@@ -837,18 +837,33 @@ ship one without the other.
   the consolidation probe is the empirical case that justifies why
   L15 binds as a Phase 4 hard prerequisite, not a "nice to have."
 
-  Two mitigation paths, both deferred:
-  1. **Realized-NAV feedback** (per L15) — Owl reads the running
-     ledger's NAV instead of forecasting; under inflation_shock,
-     realized NAV is unchanged from base but realized spending is
-     up, so realized rate rises and the *cut* guardrail fires
-     correctly.
-  2. **Bind forecast to scenario inflation.** Enforce
-     `forecast_quarterly_return_pct = expected_real_return + scenario_inflation`
-     so the forecast moves with the inflation lever. Cheaper than
-     full realized-NAV feedback but only papers over the symptom for
-     this specific failure mode; other scenarios (e.g. a return-side
-     shock) would still misread.
+  **Mitigation — the only structurally correct fix.**
+  Realized-NAV feedback (per L15): Owl reads the running ledger's
+  NAV instead of forecasting. Under inflation_shock, realized NAV is
+  unchanged from base but realized spending is up, so the realized
+  rate rises and the *cut* guardrail fires correctly. Under a
+  return-side shock (e.g. `public_drawdown`), realized NAV is down
+  while spending is unchanged, so realized rate also rises — same
+  cut response, again correct.
+
+  **Trap to avoid — partial-fix path that looks like a fix.**
+  Binding `forecast_quarterly_return_pct` to scenario inflation
+  (e.g. enforcing
+  `forecast_quarterly_return_pct = expected_real_return + scenario_inflation`)
+  is **NOT** a real fix:
+  * it addresses *inflation-driven* failure only;
+  * it does **not** address *return-driven* failure — under a
+    public-equity drawdown that leaves inflation unchanged, the
+    forecast still tracks its baseline trajectory and Owl still
+    misreads the resulting rate mismatch (Owl in fact still
+    *raises* spending into a drawdown under this patch);
+  * worse, it creates a false sense of correctness for the one
+    scenario family it covers while leaving the others silently
+    broken.
+
+  Do not implement the trap path as an alternative to realized-NAV
+  feedback. Owl's failure is architectural; the only acceptable fix
+  is the iterative-per-quarter-rule pass that L13 and L15 also bind.
 
   The probe's tx-cost-by-engine row also confirms a smaller cross-
   engine subtlety: cvxportfolio under riskfolio allocation costs
@@ -1158,6 +1173,26 @@ what changed, why, impact on outputs, backward-compatibility flag.
 * **Why.** User directive — every commit that changes model behavior
   updates this file from now on; entries are appended, never rewritten.
 * **Impact on outputs.** None.
+* **Backward-compatible.** Yes.
+
+### 2026-05-01 — L18 tightened: partial-fix path is a trap, not a mitigation
+
+* **What.** Reframed L18's mitigation section. The previous text
+  presented "bind forecast to scenario inflation" as one of two
+  mitigation paths. The audit observation — *"this only fixes
+  inflation-driven failure, not return-driven failure"* — promotes
+  it from a partial fix to an explicit anti-pattern. New framing:
+  - **Mitigation (only)**: realized-NAV feedback per L15. Works under
+    both inflation shocks and return shocks; the only structurally
+    correct fix.
+  - **Trap to avoid**: forecast-binding patch. Addresses inflation
+    failure, leaves return-driven failure broken, and creates false
+    confidence by partially fixing one scenario family.
+* **Why.** Phase 4 design is now imminent. The risk the audit named
+  is that a future contributor reads L18's "two mitigation paths"
+  language and tries the cheap one. The trap framing makes it
+  unambiguous that only the architectural fix is acceptable.
+* **Impact on outputs.** None (docs only).
 * **Backward-compatible.** Yes.
 
 ### 2026-05-01 — Phase 3 consolidation probe + L17 + L18
