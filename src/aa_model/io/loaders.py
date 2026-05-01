@@ -85,7 +85,7 @@ def load_study_config(base_path: Path) -> StudyConfig:
 
 
 def collect_config_paths(base_path: Path) -> list[Path]:
-    """Every YAML the run depends on, for hashing."""
+    """Config YAMLs (base + sub-configs). Fixture scenario excluded — see ``collect_fixture_paths``."""
     base_path = Path(base_path).resolve()
     root = resolve_repo_root(base_path)
     base = load_base_config(base_path)
@@ -95,8 +95,15 @@ def collect_config_paths(base_path: Path) -> list[Path]:
         root / base.spending.config,
         root / base.pe_pacing.config,
         root / base.scenarios.config,
-        root / base.fixtures.scenario,
     ]
+
+
+def collect_fixture_paths(base_path: Path) -> list[Path]:
+    """Fixture YAMLs the run depends on (currently just the selected scenario)."""
+    base_path = Path(base_path).resolve()
+    root = resolve_repo_root(base_path)
+    base = load_base_config(base_path)
+    return [root / base.fixtures.scenario]
 
 
 def canonicalize_yaml_for_hash(path: Path) -> bytes:
