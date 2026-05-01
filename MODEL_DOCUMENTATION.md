@@ -162,6 +162,37 @@ optimization problems. They are **not** numerically equal. Parity is
 * Under a *binding* equality constraint (`min == max` for a bucket),
   both adapters produce that exact weight within `1e-6`.
 
+### Adapter discipline contract (Phase 3+)
+
+Every adapter that ships under one of the SPEC §9 ABCs must obey the
+discipline below. The phrasing differs by ABC because each ABC hands
+the adapter different inputs — but the underlying principle is the
+same: pure function of declared inputs, no retention beyond what the
+ABC contract requires, no global state, no out-of-channel reads.
+
+* **`AllocationAdapter`** — pure function of
+  `(returns, CMA, Constraints)` → weights, plus the
+  `fit() → weights() → diagnostics()` lifecycle the ABC defines. No
+  retention of inputs across calls beyond what that lifecycle
+  requires. No global / shared state. **No ledger access** (the ABC
+  does not hand the adapter the ledger).
+* **`ImplementationAdapter`** — pure function of
+  `(current, target, CostModel)` → `RebalanceResult`. No retention
+  of inputs between calls. No global / shared state. **No ledger
+  access** (the ABC does not hand the adapter the ledger).
+* **`SpendingRule`** — pure function of `(QuarterlyLedger, SpendingParams)`
+  → quarterly outflow series. **No ledger mutation. May read the
+  ledger passed into the `SpendingRule` interface, but may not retain
+  it, mutate it, or access global/shared state.** The current call's
+  ledger argument is the only legitimate channel for ledger reads;
+  the orchestrator passes it with `initial_nav` set and (today) no
+  flows yet recorded.
+* **All adapters** — lazy backend imports if the adapter has an
+  optional dependency. Any non-stub adapter ships with: structural
+  parity tests against the stub, at least one numerical anchor case,
+  documented path-dependence semantics, and an entry in this file's
+  Change Log gating its merge.
+
 ---
 
 ## Model Components
@@ -1001,6 +1032,29 @@ what changed, why, impact on outputs, backward-compatibility flag.
 * **Why.** User directive — every commit that changes model behavior
   updates this file from now on; entries are appended, never rewritten.
 * **Impact on outputs.** None.
+* **Backward-compatible.** Yes.
+
+### 2026-05-01 — Adapter discipline contract codified
+
+* **What.** Promoted the previously per-adapter "Phase 3 guardrails"
+  prose into a centralized §Core Invariants / *Adapter discipline
+  contract (Phase 3+)* subsection. The contract is split by ABC
+  because each ABC hands the adapter different inputs:
+  - `AllocationAdapter` and `ImplementationAdapter` get no ledger via
+    their ABC, so "no ledger access" remains correct for both.
+  - `SpendingRule` ABC explicitly takes a `ledger` argument; the
+    correct discipline for spending rules is therefore "**No ledger
+    mutation. May read the ledger passed into the `SpendingRule`
+    interface, but may not retain it, mutate it, or access
+    global/shared state.**" — the audit-supplied phrasing, now
+    canonical.
+* **Why.** Phase 3c audit follow-up. The earlier "no ledger access"
+  shorthand worked for the allocation and implementation adapters
+  but was wrong for spending rules, where ledger reads are part of
+  the ABC contract. Codifying the corrected wording per ABC removes
+  the ambiguity for future adapters (notably P3d STAIRS and any
+  later spending-rule additions).
+* **Impact on outputs.** None (docs only).
 * **Backward-compatible.** Yes.
 
 ### 2026-05-01 — Phase 3c / Owl guardrail spending rule
