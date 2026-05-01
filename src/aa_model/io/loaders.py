@@ -58,9 +58,7 @@ def resolve_repo_root(start: Path) -> Path:
         if (p / "configs").is_dir() and (p / "src" / "aa_model").is_dir():
             return p
         p = p.parent
-    raise FileNotFoundError(
-        f"Could not find repo root (configs/ + src/aa_model/) above {start}"
-    )
+    raise FileNotFoundError(f"Could not find repo root (configs/ + src/aa_model/) above {start}")
 
 
 def load_study_config(base_path: Path) -> StudyConfig:

@@ -12,9 +12,8 @@ from __future__ import annotations
 import importlib.metadata as md
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-
 
 _TRACKED_LIBS = ("aa_model", "numpy", "pandas", "pydantic", "pyyaml", "pyarrow", "jinja2")
 
@@ -42,7 +41,7 @@ def make_run_id(config_hash: str, fixtures_hash: str) -> str:
 
 
 def utcnow_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 @dataclass(frozen=True)

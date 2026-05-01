@@ -151,9 +151,7 @@ class SpendingConfig(BaseModel):
     @model_validator(mode="after")
     def _floor_le_ceiling(self) -> SpendingConfig:
         if self.floor_usd > self.ceiling_usd:
-            raise ValueError(
-                f"floor_usd ({self.floor_usd}) > ceiling_usd ({self.ceiling_usd})"
-            )
+            raise ValueError(f"floor_usd ({self.floor_usd}) > ceiling_usd ({self.ceiling_usd})")
         return self
 
 

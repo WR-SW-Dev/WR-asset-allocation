@@ -36,12 +36,8 @@ def write_markdown_report(
     lines.append("")
     lines.append(f"- config_hash: `{config_hash}`")
     lines.append(f"- fixtures_hash: `{fixtures_hash}`")
-    lines.append(
-        f"- scenario: `{cfg.fixture_scenario.name}` — {cfg.fixture_scenario.description}"
-    )
-    lines.append(
-        f"- horizon: {cfg.base.horizon.start_quarter} + {cfg.base.horizon.num_quarters}q"
-    )
+    lines.append(f"- scenario: `{cfg.fixture_scenario.name}` — {cfg.fixture_scenario.description}")
+    lines.append(f"- horizon: {cfg.base.horizon.start_quarter} + {cfg.base.horizon.num_quarters}q")
     lines.append("")
     lines.append("## Total NAV")
     lines.append("")

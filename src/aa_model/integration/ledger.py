@@ -72,9 +72,7 @@ class QuarterlyLedger:
         if self._finalized:
             raise RuntimeError("ledger already finalized; cannot add more rows")
         if flow_type not in _FLOW_RANK:
-            raise ValueError(
-                f"unknown flow_type {flow_type!r}; valid: {list(FLOW_ORDER)}"
-            )
+            raise ValueError(f"unknown flow_type {flow_type!r}; valid: {list(FLOW_ORDER)}")
         amt = float(amount_usd)
         if amt != amt:  # NaN check
             raise ValueError(f"amount_usd is NaN for ({quarter}, {bucket}, {flow_type})")
@@ -200,9 +198,7 @@ class QuarterlyLedger:
                     - sub["nav_end_usd"].iloc[:-1].to_numpy()
                 )
                 if (abs(gaps) > tol).any():
-                    raise AssertionError(
-                        f"chain consistency failed within bucket {bucket!r}"
-                    )
+                    raise AssertionError(f"chain consistency failed within bucket {bucket!r}")
 
         # Per-bucket per-quarter tie-out (redundant given construction; surfaces
         # ordering / phantom-flow bugs).
@@ -242,17 +238,11 @@ class QuarterlyLedger:
             initial_total = sum(self._initial_nav.values())
             for i, q in enumerate(quarters):
                 end_now = float(end_by_q.loc[q].sum())
-                end_prev = (
-                    float(end_by_q.loc[quarters[i - 1]].sum()) if i > 0 else initial_total
-                )
+                end_prev = float(end_by_q.loc[quarters[i - 1]].sum()) if i > 0 else initial_total
                 actual_delta = end_now - end_prev
                 contrib = df[
                     (df["quarter"] == q)
-                    & (
-                        df["flow_type"].isin(
-                            ["return", "pe_nav_mark", "inflow", "spend"]
-                        )
-                    )
+                    & (df["flow_type"].isin(["return", "pe_nav_mark", "inflow", "spend"]))
                 ]
                 expected_delta = float(contrib["amount_usd"].sum())
                 if abs(actual_delta - expected_delta) > tol:

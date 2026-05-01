@@ -22,7 +22,5 @@ class SpendingParams:
 
 class SpendingRule(ABC):
     @abstractmethod
-    def quarterly_outflows(
-        self, ledger: QuarterlyLedger, params: SpendingParams
-    ) -> pd.Series:
+    def quarterly_outflows(self, ledger: QuarterlyLedger, params: SpendingParams) -> pd.Series:
         """Return a Series indexed by quarter Period, values = spending USD ≥ 0."""

@@ -22,9 +22,7 @@ class FlatRealRule(SpendingRule):
     Floor and ceiling clip the per-quarter value.
     """
 
-    def quarterly_outflows(
-        self, ledger: QuarterlyLedger, params: SpendingParams
-    ) -> pd.Series:
+    def quarterly_outflows(self, ledger: QuarterlyLedger, params: SpendingParams) -> pd.Series:
         cfg = params.config
         idx = [params.start_quarter + i for i in range(params.num_quarters)]
         values: list[float] = []
@@ -46,13 +44,10 @@ class SmoothingRule(SpendingRule):
     only knows quarter-by-quarter — that wiring is deferred to a later phase.
     """
 
-    def quarterly_outflows(
-        self, ledger: QuarterlyLedger, params: SpendingParams
-    ) -> pd.Series:
+    def quarterly_outflows(self, ledger: QuarterlyLedger, params: SpendingParams) -> pd.Series:
         if params.config.smoothing.weight != 0.0:
             raise NotImplementedError(
-                "smoothing.weight > 0 requires NAV-trajectory smoothing — "
-                "deferred past Phase 1"
+                "smoothing.weight > 0 requires NAV-trajectory smoothing — " "deferred past Phase 1"
             )
         return FlatRealRule().quarterly_outflows(ledger, params)
 

@@ -29,18 +29,14 @@ def validate_study_config(cfg: StudyConfig) -> None:
         )
     extra = nav_buckets - stub_buckets
     if extra:
-        raise ValueError(
-            f"fixture nav_initial has buckets not in stub_weights: {sorted(extra)}"
-        )
+        raise ValueError(f"fixture nav_initial has buckets not in stub_weights: {sorted(extra)}")
 
     return_buckets = set(cfg.fixture_scenario.returns)
     pe_buckets = {b for b in stub_buckets if b.startswith("pe_")}
     expected_return_buckets = stub_buckets - pe_buckets
     missing_returns = expected_return_buckets - return_buckets
     if missing_returns:
-        raise ValueError(
-            f"fixture returns missing buckets: {sorted(missing_returns)}"
-        )
+        raise ValueError(f"fixture returns missing buckets: {sorted(missing_returns)}")
 
     for fund in cfg.pe_pacing.funds:
         if fund.sleeve not in stub_buckets:

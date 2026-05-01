@@ -102,9 +102,7 @@ def project_fund(fund: FundConfig, defaults: TADefaultsConfig) -> pd.DataFrame:
     return df
 
 
-def project_funds(
-    funds: list[FundConfig], defaults: TADefaultsConfig
-) -> pd.DataFrame:
+def project_funds(funds: list[FundConfig], defaults: TADefaultsConfig) -> pd.DataFrame:
     """Stack projections across funds. Empty input returns an empty frame."""
     if not funds:
         return pd.DataFrame(columns=list(PROJECTION_COLUMNS))

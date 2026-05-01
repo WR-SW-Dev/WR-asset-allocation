@@ -106,9 +106,7 @@ def run_orchestrator(
     )
 
 
-def _build_ledger(
-    cfg: StudyConfig, run_id: str
-) -> tuple[QuarterlyLedger, dict[pd.Period, float]]:
+def _build_ledger(cfg: StudyConfig, run_id: str) -> tuple[QuarterlyLedger, dict[pd.Period, float]]:
     start_q = pd.Period(cfg.base.horizon.start_quarter, freq="Q-DEC")
     n_q = cfg.base.horizon.num_quarters
     initial = {b: float(v) for b, v in cfg.fixture_scenario.nav_initial.items()}
@@ -137,10 +135,11 @@ def _build_ledger(
         rate_table[bucket] = rates
 
     pe_proj = project_horizon(cfg.pe_pacing, start_q, n_q)
-    pe_by_q: dict[str, pd.DataFrame] = {
-        str(q): pe_proj[pe_proj["quarter"] == str(q)]
-        for q in (start_q + i for i in range(n_q))
-    } if not pe_proj.empty else {}
+    pe_by_q: dict[str, pd.DataFrame] = (
+        {str(q): pe_proj[pe_proj["quarter"] == str(q)] for q in (start_q + i for i in range(n_q))}
+        if not pe_proj.empty
+        else {}
+    )
 
     expected_externals: dict[pd.Period, float] = {}
     ext_inflow_amt = float(cfg.fixture_scenario.external_inflows.default_quarterly_usd)
@@ -151,8 +150,11 @@ def _build_ledger(
         # 1. inflow
         if ext_inflow_amt != 0.0:
             ledger.add(
-                quarter=q, bucket="cash", flow_type="inflow",
-                amount_usd=ext_inflow_amt, source="fixture",
+                quarter=q,
+                bucket="cash",
+                flow_type="inflow",
+                amount_usd=ext_inflow_amt,
+                source="fixture",
             )
             running_nav["cash"] = running_nav.get("cash", 0.0) + ext_inflow_amt
 
@@ -162,8 +164,11 @@ def _build_ledger(
             nav_start = running_nav.get(bucket, 0.0)
             return_amt = rate * nav_start
             ledger.add(
-                quarter=q, bucket=bucket, flow_type="return",
-                amount_usd=return_amt, source="cma",
+                quarter=q,
+                bucket=bucket,
+                flow_type="return",
+                amount_usd=return_amt,
+                source="cma",
             )
             running_nav[bucket] = nav_start + return_amt
 
@@ -177,30 +182,50 @@ def _build_ledger(
                 dist = float(r["distribution_usd"])
                 mark = float(r["nav_mark_usd"])
                 if call != 0.0:
-                    ledger.add(quarter=q, bucket=sleeve, flow_type="pe_call",
-                               amount_usd=+call, source=src)
-                    ledger.add(quarter=q, bucket="cash", flow_type="pe_call",
-                               amount_usd=-call, source=src)
+                    ledger.add(
+                        quarter=q, bucket=sleeve, flow_type="pe_call", amount_usd=+call, source=src
+                    )
+                    ledger.add(
+                        quarter=q, bucket="cash", flow_type="pe_call", amount_usd=-call, source=src
+                    )
                     running_nav[sleeve] = running_nav.get(sleeve, 0.0) + call
                     running_nav["cash"] = running_nav.get("cash", 0.0) - call
                 if dist != 0.0:
-                    ledger.add(quarter=q, bucket=sleeve, flow_type="pe_distribution",
-                               amount_usd=-dist, source=src)
-                    ledger.add(quarter=q, bucket="cash", flow_type="pe_distribution",
-                               amount_usd=+dist, source=src)
+                    ledger.add(
+                        quarter=q,
+                        bucket=sleeve,
+                        flow_type="pe_distribution",
+                        amount_usd=-dist,
+                        source=src,
+                    )
+                    ledger.add(
+                        quarter=q,
+                        bucket="cash",
+                        flow_type="pe_distribution",
+                        amount_usd=+dist,
+                        source=src,
+                    )
                     running_nav[sleeve] = running_nav.get(sleeve, 0.0) - dist
                     running_nav["cash"] = running_nav.get("cash", 0.0) + dist
                 if mark != 0.0:
-                    ledger.add(quarter=q, bucket=sleeve, flow_type="pe_nav_mark",
-                               amount_usd=+mark, source=src)
+                    ledger.add(
+                        quarter=q,
+                        bucket=sleeve,
+                        flow_type="pe_nav_mark",
+                        amount_usd=+mark,
+                        source=src,
+                    )
                     running_nav[sleeve] = running_nav.get(sleeve, 0.0) + mark
 
         # 6. spend
         spend_amt = float(spending.iloc[i])
         if spend_amt != 0.0:
             ledger.add(
-                quarter=q, bucket="cash", flow_type="spend",
-                amount_usd=-spend_amt, source="spending",
+                quarter=q,
+                bucket="cash",
+                flow_type="spend",
+                amount_usd=-spend_amt,
+                source="spending",
             )
             running_nav["cash"] = running_nav.get("cash", 0.0) - spend_amt
 
@@ -215,8 +240,11 @@ def _build_ledger(
             t = float(trade)
             if t != 0.0:
                 ledger.add(
-                    quarter=q, bucket=bucket, flow_type="rebalance",
-                    amount_usd=t, source="rebalance",
+                    quarter=q,
+                    bucket=bucket,
+                    flow_type="rebalance",
+                    amount_usd=t,
+                    source="rebalance",
                 )
                 running_nav[bucket] = running_nav.get(bucket, 0.0) + t
 

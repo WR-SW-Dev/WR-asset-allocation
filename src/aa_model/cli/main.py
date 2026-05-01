@@ -17,8 +17,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     run = sub.add_parser("run", help="run the study end-to-end")
-    run.add_argument("--config", required=True, type=Path,
-                     help="path to base.yaml")
+    run.add_argument("--config", required=True, type=Path, help="path to base.yaml")
     run.add_argument(
         "--dry-run",
         action="store_true",

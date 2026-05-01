@@ -24,8 +24,11 @@ from aa_model.integration.orchestrator import run_orchestrator  # noqa: E402
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the SFO Phase 1 study end-to-end.")
     parser.add_argument("--config", required=True, type=Path, help="path to base.yaml")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="validate configs and print manifest preview without writing outputs")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="validate configs and print manifest preview without writing outputs",
+    )
     args = parser.parse_args(argv)
 
     result = run_orchestrator(args.config, dry_run=args.dry_run)

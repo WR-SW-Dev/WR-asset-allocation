@@ -1,0 +1,130 @@
+"""Ledger arithmetic and §5.1 invariant tests."""
+
+from __future__ import annotations
+
+import pandas as pd
+import pytest
+from aa_model.integration.ledger import FLOW_ORDER, QuarterlyLedger
+
+
+def _q(s: str) -> pd.Period:
+    return pd.Period(s, freq="Q-DEC")
+
+
+def test_basic_chain_consistency():
+    L = QuarterlyLedger("r1", initial_nav={"a": 100.0}, start_quarter=_q("2026Q1"))
+    L.add(quarter=_q("2026Q1"), bucket="a", flow_type="return", amount_usd=10.0, source="cma")
+    L.add(quarter=_q("2026Q2"), bucket="a", flow_type="return", amount_usd=5.0, source="cma")
+    df = L.finalize()
+    assert df.iloc[0]["nav_start_usd"] == 100.0
+    assert df.iloc[0]["nav_end_usd"] == 110.0
+    assert df.iloc[1]["nav_start_usd"] == 110.0
+    assert df.iloc[1]["nav_end_usd"] == 115.0
+    L.validate()
+
+
+def test_canonical_intra_quarter_ordering():
+    q = _q("2026Q1")
+    L = QuarterlyLedger("r", initial_nav={"a": 0.0}, start_quarter=q)
+    # Insert in reverse order; finalize should re-sort.
+    L.add(quarter=q, bucket="a", flow_type="rebalance", amount_usd=0.0, source="z")
+    L.add(quarter=q, bucket="a", flow_type="spend", amount_usd=0.0, source="s")
+    L.add(quarter=q, bucket="a", flow_type="pe_nav_mark", amount_usd=0.0, source="p")
+    L.add(quarter=q, bucket="a", flow_type="pe_distribution", amount_usd=0.0, source="p")
+    L.add(quarter=q, bucket="a", flow_type="pe_call", amount_usd=0.0, source="p")
+    L.add(quarter=q, bucket="a", flow_type="return", amount_usd=0.0, source="cma")
+    L.add(quarter=q, bucket="a", flow_type="inflow", amount_usd=0.0, source="ext")
+    df = L.finalize()
+    assert df["flow_type"].tolist() == list(FLOW_ORDER)
+
+
+def test_per_row_consistency_holds_by_construction():
+    q = _q("2026Q1")
+    L = QuarterlyLedger("r", initial_nav={"a": 100.0}, start_quarter=q)
+    L.add(quarter=q, bucket="a", flow_type="return", amount_usd=2.5, source="cma")
+    df = L.finalize()
+    diff = (df["nav_end_usd"] - df["nav_start_usd"] - df["amount_usd"]).abs().max()
+    assert diff < 1e-12
+
+
+def test_rebalance_zero_sum_violation_detected():
+    q = _q("2026Q1")
+    L = QuarterlyLedger("r", initial_nav={"a": 100.0, "b": 50.0}, start_quarter=q)
+    L.add(quarter=q, bucket="a", flow_type="rebalance", amount_usd=-10.0, source="r")
+    L.add(quarter=q, bucket="b", flow_type="rebalance", amount_usd=+9.0, source="r")
+    with pytest.raises(AssertionError, match="rebalance not zero-sum"):
+        L.validate()
+
+
+def test_pe_call_zero_sum_violation_detected():
+    q = _q("2026Q1")
+    L = QuarterlyLedger("r", initial_nav={"cash": 100.0, "pe_buyout": 0.0}, start_quarter=q)
+    L.add(quarter=q, bucket="pe_buyout", flow_type="pe_call", amount_usd=10.0, source="p")
+    L.add(quarter=q, bucket="cash", flow_type="pe_call", amount_usd=-9.0, source="p")
+    with pytest.raises(AssertionError, match="pe_call not zero-sum"):
+        L.validate()
+
+
+def test_external_cash_flow_tie_out():
+    q = _q("2026Q1")
+    L = QuarterlyLedger("r", initial_nav={"cash": 100.0}, start_quarter=q)
+    L.add(quarter=q, bucket="cash", flow_type="inflow", amount_usd=50.0, source="ext")
+    L.add(quarter=q, bucket="cash", flow_type="spend", amount_usd=-30.0, source="sp")
+    # Net external this quarter = +20. Mismatch should raise.
+    L.validate(expected_externals_by_quarter={q: 20.0})  # pass case
+    with pytest.raises(AssertionError, match="external cash flow tie-out"):
+        L.validate(expected_externals_by_quarter={q: 99.0})
+
+
+def test_total_nav_conservation():
+    q1 = _q("2026Q1")
+    q2 = _q("2026Q2")
+    L = QuarterlyLedger("r", initial_nav={"a": 100.0, "b": 50.0}, start_quarter=q1)
+    # P&L only: a +10, b +5 in q1; rebalance moves 5 from a to b.
+    L.add(quarter=q1, bucket="a", flow_type="return", amount_usd=10.0, source="cma")
+    L.add(quarter=q1, bucket="b", flow_type="return", amount_usd=5.0, source="cma")
+    L.add(quarter=q1, bucket="a", flow_type="rebalance", amount_usd=-5.0, source="r")
+    L.add(quarter=q1, bucket="b", flow_type="rebalance", amount_usd=+5.0, source="r")
+    # q2 P&L
+    L.add(quarter=q2, bucket="a", flow_type="return", amount_usd=10.0, source="cma")
+    L.add(quarter=q2, bucket="b", flow_type="return", amount_usd=5.0, source="cma")
+    L.validate()
+
+
+def test_nan_amount_rejected_at_add_time():
+    q = _q("2026Q1")
+    L = QuarterlyLedger("r", initial_nav={"a": 100.0}, start_quarter=q)
+    with pytest.raises(ValueError, match="NaN"):
+        L.add(quarter=q, bucket="a", flow_type="return", amount_usd=float("nan"), source="cma")
+
+
+def test_unknown_flow_type_rejected():
+    q = _q("2026Q1")
+    L = QuarterlyLedger("r", initial_nav={"a": 100.0}, start_quarter=q)
+    with pytest.raises(ValueError, match="unknown flow_type"):
+        L.add(quarter=q, bucket="a", flow_type="bogus", amount_usd=1.0, source="x")
+
+
+def test_finalize_idempotent_and_locks():
+    q = _q("2026Q1")
+    L = QuarterlyLedger("r", initial_nav={"a": 100.0}, start_quarter=q)
+    L.add(quarter=q, bucket="a", flow_type="return", amount_usd=5.0, source="cma")
+    df1 = L.finalize()
+    df2 = L.finalize()
+    assert df1 is df2
+    with pytest.raises(RuntimeError, match="already finalized"):
+        L.add(quarter=q, bucket="a", flow_type="return", amount_usd=1.0, source="cma")
+
+
+def test_end_nav_by_quarter_includes_all_buckets():
+    q1 = _q("2026Q1")
+    q2 = _q("2026Q2")
+    L = QuarterlyLedger("r", initial_nav={"a": 100.0, "b": 50.0}, start_quarter=q1)
+    # Only `a` has flows; `b` should still appear with carried NAV.
+    L.add(quarter=q1, bucket="a", flow_type="return", amount_usd=10.0, source="cma")
+    L.add(quarter=q2, bucket="a", flow_type="return", amount_usd=5.0, source="cma")
+    grid = L.end_nav_by_quarter()
+    assert "b" in grid.columns
+    # b had no rows so its end NAV stays at initial_nav across quarters.
+    assert grid.loc[q1, "b"] == 50.0
+    assert grid.loc[q2, "b"] == 50.0
