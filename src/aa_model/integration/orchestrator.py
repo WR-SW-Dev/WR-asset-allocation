@@ -44,7 +44,7 @@ from aa_model.io.loaders import (
 )
 from aa_model.io.schemas import StudyConfig
 from aa_model.io.validation import validate_study_config
-from aa_model.pe.pacing import project_horizon
+from aa_model.pe.factory import make_pe_adapter
 from aa_model.spending.base import SpendingParams
 from aa_model.spending.rules import make_rule
 
@@ -161,7 +161,25 @@ def _build_ledger(
                 rates[ov.quarter_index] = ov.value
         rate_table[bucket] = rates
 
-    pe_proj = project_horizon(cfg.pe_pacing, start_q, n_q)
+    # Phase 7: deterministic public_equity quarterly return path,
+    # indexed by Period. STAIRS reads it for the coupling term; TA
+    # ignores it. Built from rate_table so it tracks scenario overrides.
+    horizon_periods = pd.PeriodIndex(
+        [start_q + i for i in range(n_q)], name="quarter"
+    )
+    public_equity_rates = rate_table.get("public_equity", [0.0] * n_q)
+    public_equity_path = pd.Series(
+        public_equity_rates, index=horizon_periods, dtype=float, name="public_equity"
+    )
+
+    pe_adapter = make_pe_adapter(engine=cfg.base.pe.engine)
+    pe_proj = pe_adapter.project_horizon(
+        cfg.pe_pacing,
+        start_q,
+        n_q,
+        cma=cma,
+        public_equity_path=public_equity_path,
+    )
     pe_by_q: dict[str, pd.DataFrame] = (
         {str(q): pe_proj[pe_proj["quarter"] == str(q)] for q in (start_q + i for i in range(n_q))}
         if not pe_proj.empty

@@ -48,6 +48,13 @@ class PEConfig(BaseModel):
     model_config = _STRICT
     sleeve_target_pct: float = Field(ge=0.0, le=1.0)
     scope: list[Literal["buyout", "venture", "growth", "infra", "re", "pc"]]
+    # Phase 7 / STAIRS: PE projection engine. Default "ta" (existing
+    # Takahashi–Alexander model) keeps every shipped config bit-stable.
+    # "stairs" opts into the CMA-coupled deterministic single-path
+    # adapter; the cross-config validator then requires
+    # pe_pacing.stairs_defaults to be present and aligned with
+    # allocation.stub_weights pe_* sleeves.
+    engine: Literal["ta", "stairs"] = "ta"
 
 
 class RebalanceConfig(BaseModel):
@@ -498,10 +505,70 @@ class FundConfig(BaseModel):
         return v
 
 
+class _StairsSleeveParams(BaseModel):
+    """STAIRS per-sleeve parameters (Phase 7 / L1).
+
+    ``idiosyncratic_drift_pct`` is the annual deterministic NAV-growth
+    component (replaces TA's ``growth_pct``). ``beta_to_public_equity``
+    is the coupling coefficient on the realized-vs-expected
+    public_equity excess. Both finite.
+    """
+
+    model_config = _STRICT
+    idiosyncratic_drift_pct: float
+    beta_to_public_equity: float
+
+    @field_validator("idiosyncratic_drift_pct")
+    @classmethod
+    def _drift_in_bounds(cls, v: float) -> float:
+        x = float(v)
+        if not math.isfinite(x):
+            raise ValueError(f"idiosyncratic_drift_pct = {v!r} is not finite")
+        if abs(x) >= _EXPECTED_RETURN_BOUND:
+            raise ValueError(
+                f"idiosyncratic_drift_pct = {x} is out of bounds; "
+                f"expected |x| < {_EXPECTED_RETURN_BOUND} (decimal, not percent — "
+                "did you write 5 instead of 0.05?)"
+            )
+        return x
+
+    @field_validator("beta_to_public_equity")
+    @classmethod
+    def _beta_finite(cls, v: float) -> float:
+        x = float(v)
+        if not math.isfinite(x):
+            raise ValueError(f"beta_to_public_equity = {v!r} is not finite")
+        return x
+
+
+class StairsDefaultsConfig(BaseModel):
+    """Per-sleeve STAIRS parameters (Phase 7 / L1).
+
+    Required when ``base.pe.engine == "stairs"`` (enforced at
+    cross-config validation time). The ``per_sleeve`` keys must equal
+    the ``pe_*`` subset of ``allocation.stub_weights``.
+    """
+
+    model_config = _STRICT
+    per_sleeve: dict[str, _StairsSleeveParams]
+
+    @field_validator("per_sleeve")
+    @classmethod
+    def _per_sleeve_non_empty(
+        cls, v: dict[str, _StairsSleeveParams]
+    ) -> dict[str, _StairsSleeveParams]:
+        if not v:
+            raise ValueError("stairs_defaults.per_sleeve must be non-empty")
+        return v
+
+
 class PEPacingConfig(BaseModel):
     model_config = _STRICT
     ta_defaults: TADefaultsConfig
     funds: list[FundConfig]
+    # Phase 7 / STAIRS. Optional at the schema level; required at
+    # cross-config validation when base.pe.engine == "stairs".
+    stairs_defaults: StairsDefaultsConfig | None = None
 
 
 # ---- scenarios (Phase 2 placeholder) ---------------------------------------

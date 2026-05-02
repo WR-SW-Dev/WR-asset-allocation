@@ -472,7 +472,40 @@ These are explicitly called out so future readers cannot misinterpret model
 output. Each entry separates **model behavior** (what the code does) from
 **real-world interpretation** (why the model output may not match reality).
 
-### L1 — PE timing scenarios mechanically affect returns
+### L1 — PE timing scenarios mechanically affect returns — [PARTIALLY RESOLVED 2026-05-02, Phase 7]
+
+> **Status: PARTIALLY RESOLVED in Phase 7.** Resolution is
+> **engine-conditional**:
+>
+> * Under ``base.pe.engine = "stairs"`` (the new default-eligible
+>   PE adapter), the artifactual "free return lift" mechanism is
+>   closed. PE NAV growth becomes a CMA-anchored coupling to
+>   realized public_equity excess: a public_drawdown propagates
+>   into PE NAV proportional to ``beta_to_public_equity`` per
+>   sleeve; ``clustered_calls`` and ``delayed_pe_distributions``
+>   no longer fabricate cumulative return because the deployed
+>   capital is now exposed to the same scenario shock. Any
+>   residual scenario-driven PE return effect under STAIRS is
+>   the *real* timing-coupling channel — calls deployed during a
+>   public drawdown buy at low NAV that subsequently recovers if
+>   public_equity recovers — not an artifact.
+> * Under ``base.pe.engine = "ta"`` (the default for
+>   backwards-compatibility), the original artifact persists.
+>   ``ta_defaults.growth_pct`` is a constant, scenario-blind, and
+>   the timing-scenario lift documented in the Phase 1 text below
+>   continues to appear. Users who care about realistic timing
+>   stress should opt into STAIRS.
+> * Phase 7 (commit landing this entry) introduces the PE adapter
+>   pattern (``pe/base.py`` + ``pe/ta_adapter.py`` +
+>   ``pe/stairs_adapter.py`` + ``pe/factory.py``); the STAIRS
+>   recursion clips ``growth_pct_q ≥ -0.99`` so NAV stays
+>   non-negative under extreme drawdowns. Six anchor tests in
+>   ``tests/test_pe_adapter_stairs.py`` pin the adapter
+>   semantics (parity at ``beta=0`` + drift = ``growth_pct``,
+>   beta amplification, idiosyncratic monotonicity, public-equity
+>   decoupling, linear commitment, growth-clip activation).
+>
+> The original Phase 1 text follows for audit-trail purposes.
 
 * **Model behavior.** `clustered_calls` produces a higher cumulative return
   than `base`; `delayed_pe_distributions` also produces a slightly higher
@@ -3762,3 +3795,78 @@ what changed, why, impact on outputs, backward-compatibility flag.
   default-config output is byte-stable (``pe.engine=ta`` is
   default and is bit-equivalent to today).
 * **Backward-compatible.** Yes (design only).
+
+### 2026-05-02 — Phase 7 implementation: STAIRS PE adapter (partially resolves L1)
+
+* **What.** Implements the §Phase 7 design locked one commit prior.
+  Single cohesive commit because the adapter pattern only makes
+  sense when schema, ABC, both engines, factory, orchestrator
+  wiring, and tests land together. Five surfaces:
+  1. **Schema** (`io/schemas.py`). New
+     ``base.pe.engine: Literal["ta", "stairs"] = "ta"``. New
+     ``StairsDefaultsConfig`` with ``per_sleeve: dict[str,
+     _StairsSleeveParams]``; per-sleeve params validate
+     ``|idiosyncratic_drift_pct| < 1.0`` (percent-vs-decimal
+     guard) and ``finite(beta_to_public_equity)``.
+     ``PEPacingConfig`` gains optional ``stairs_defaults``.
+  2. **Cross-config validation** (`io/validation.py`). When
+     ``pe.engine == "stairs"``, ``stairs_defaults`` must be present
+     and its ``per_sleeve`` keys must equal the ``pe_*`` subset of
+     ``allocation.stub_weights``. Missing or extra sleeves raise
+     with a precise ``missing: [...] extra: [...]`` diff. **No
+     silent fallback to TA.**
+  3. **Adapter pattern** (new `pe/base.py`, `pe/ta_adapter.py`,
+     `pe/stairs_adapter.py`, `pe/factory.py`). ``PEAdapter`` ABC
+     mirrors ``AllocationAdapter`` / ``ImplementationAdapter``.
+     ``TAAdapter`` is a thin pass-through to the existing
+     ``pacing.project_horizon`` (zero behavior change at
+     ``pe.engine="ta"``). ``STAIRSAdapter`` implements the
+     CMA-coupled recursion:
+       ``growth_pct_q = drift/4 + beta · (realized_pu - expected_pu)``
+       ``growth_pct_q = max(growth_pct_q, -0.99)``  # required clip
+     with ``expected_pu = cma.expected_returns_annual["public_equity"] / 4``.
+     Quarters outside the supplied path default to ``excess = 0``
+     (CMA-expectation default). The clip count is surfaced via
+     ``adapter.diagnostics()["clipped_quarters"]``.
+  4. **Orchestrator wiring** (`integration/orchestrator.py`).
+     ``_build_ledger`` pre-computes a deterministic
+     ``public_equity_path: pd.Series`` from ``rate_table`` (which
+     already incorporates fixture overrides) and dispatches the
+     PE projection through ``make_pe_adapter(engine=cfg.base.pe.engine)``.
+     ``PROJECTION_COLUMNS`` is unchanged; the per-quarter ledger
+     emission code does not branch on engine.
+  5. **Tests** (`tests/test_pe_adapter_stairs.py`, 16 cases).
+     Schema-level: drift bounds (out-of-range, non-finite),
+     beta finite, per_sleeve non-empty. Cross-config:
+     stairs-engine-without-stairs_defaults, sleeve-set mismatch.
+     Adapter-level: parity at ``beta=0 + drift=growth_pct``
+     (per-fund + orchestrator byte-stable), beta amplification
+     under drawdown, idiosyncratic-drift monotonicity at ``beta=0``,
+     public_equity decoupling at ``beta=0``, linear commitment
+     property (``$X + $Y == $X+Y`` aggregate), growth-clip
+     activation under extreme drawdown. Plus factory routing tests.
+* **L1 status.** Flipped to
+  ``[PARTIALLY RESOLVED 2026-05-02, Phase 7]``: free return lift
+  closed under STAIRS; persists under TA (engine-conditional).
+* **Why.** Phase 6 closed L6 (correlation shocks) but the
+  public→PE transmission channel was still missing — scenarios
+  that move public markets had no path into PE. STAIRS supplies
+  that channel deterministically, without expanding the engine to
+  multi-path / Monte Carlo. The growth clip is a domain
+  constraint preventing NAV from going negative under extreme
+  shocks × high beta.
+* **Impact on outputs.** Zero on default-config runs
+  (``pe.engine="ta"`` is the default; the TA adapter is
+  byte-stable with the pre-Phase-7 single-function path).
+  ``ledger.parquet`` and ``manifest.json`` byte-stable on every
+  shipped scenario. End-to-end byte-stability also verified
+  under ``pe.engine="stairs"`` at parity settings
+  (``beta=0, drift=growth_pct``) by
+  ``test_stairs_engine_at_parity_yields_byte_stable_orchestrator_run``.
+  Output divergence is gated entirely on opting into
+  ``pe.engine="stairs"`` with non-parity settings.
+* **Tests.** **176 pass** (was 160). 16 new; zero regressions.
+* **Backward-compatible.** Yes for adapter behavior; **breaking**
+  for any out-of-tree config that explicitly sets
+  ``pe.engine="stairs"`` without supplying ``stairs_defaults`` —
+  pydantic + cross-config validation will fail loudly.

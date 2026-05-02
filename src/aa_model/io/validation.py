@@ -75,6 +75,27 @@ def validate_study_config(cfg: StudyConfig) -> None:
                 f"fund {fund.name!r} sleeve {fund.sleeve!r} not in stub_weights buckets"
             )
 
+    # Phase 7 / STAIRS: when the PE engine is STAIRS, stairs_defaults
+    # must be present and its per_sleeve keys must equal the pe_*
+    # subset of allocation.stub_weights. Loud failure on misalignment;
+    # no silent fallback to TA.
+    if cfg.base.pe.engine == "stairs":
+        if cfg.pe_pacing.stairs_defaults is None:
+            raise ValueError(
+                "base.pe.engine='stairs' requires pe_pacing.stairs_defaults; "
+                "missing in this study config"
+            )
+        pe_sleeves = {b for b in stub_buckets if b.startswith("pe_")}
+        stairs_sleeves = set(cfg.pe_pacing.stairs_defaults.per_sleeve.keys())
+        missing = pe_sleeves - stairs_sleeves
+        extra = stairs_sleeves - pe_sleeves
+        if missing or extra:
+            raise ValueError(
+                "stairs_defaults.per_sleeve keys do not match the pe_* "
+                f"subset of allocation.stub_weights — missing: {sorted(missing)}, "
+                f"extra: {sorted(extra)}"
+            )
+
     pe_weight = sum(w for b, w in cfg.allocation.stub_weights.items() if b.startswith("pe_"))
     pe_target = cfg.base.pe.sleeve_target_pct
     if abs(pe_weight - pe_target) > 1e-9:
