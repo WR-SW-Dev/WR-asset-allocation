@@ -5639,6 +5639,631 @@ With the explicit notes:
 
 ---
 
+## Phase 13 design (pre-implementation) — RE / OpCo distribution_inflow producer
+
+> **One-line goal.** Implement the **producer-side** layer that
+> emits ``distribution_inflow`` ledger rows from real estate, OpCo,
+> land, development, portfolio income, and entity-level
+> distributions. Closes the consumer-producer loop opened by
+> Phase 12.5: Owl can now run end-to-end on
+> ``spending_base="distributable_income"`` with hand-authored or
+> config-driven family-office income data. **Strictly producer-side;
+> does NOT change Owl math, the ledger schema (beyond adding rows),
+> the rate-band logic, or any allocator / rebalancer behavior.**
+> Preserves the Phase 4a closed-prior-quarter state-flow contract.
+>
+> **Phase 13 is config-driven, not workbook-driven.** It defines a
+> Pydantic ``DistributionProducerConfig`` that the user (or a future
+> ingestion phase) populates with classified distribution events.
+> The producer reads the spec and emits ``distribution_inflow``
+> rows during the orchestrator's per-quarter loop. **Workbook
+> ingestion (``Cashflow Modeling v7.xlsx`` and entity schema) is
+> Phase 14** and is explicitly out of scope here.
+
+### Required scope tightening — Phase 13 is the *config-driven producer* only
+
+| Concern | In scope? | Why |
+| --- | --- | --- |
+| ``DistributionProducerConfig`` Pydantic schema | yes | The structured input the producer consumes |
+| ``DistributionProducer`` ABC + ``ConfigDrivenProducer`` adapter | yes | Matches the existing adapter governance contract |
+| Per-domain emission rules (RE / OpCo / land / development / portfolio / entity) | yes | Codifies the standing-principle audit at the producer layer |
+| Source convention enforcement at emit time | yes | Locks the Phase 12.5 reviewer-tightening-2 convention into machine-checkable code |
+| ``restricted=True`` filtering | yes | Producer-side gate before rows hit the ledger |
+| Recurrence + confidence as diagnostic metadata (no ledger schema change) | yes | Captured in producer-side diagnostics, surfaced in report |
+| Orchestrator wiring of the producer into the per-quarter loop | yes | Producer must run before the spending rule reads `closed_through(q-1)` for q+1 |
+| Workbook ingestion (``Cashflow Modeling v7.xlsx``) | **no — Phase 14** | Workbook → spec is downstream |
+| Entity ownership waterfall | **no — Phase 14** | The spec author classifies upstream |
+| Tax modeling / withholding | **no** | Producer trusts upstream classification per Phase 12.5 reviewer tightening 1 |
+| Legal distributability engine | **no** | Same as above |
+| PE distribution opt-in | **no — Phase 13.x or later** | PE distributions remain excluded by default per Phase 12.5 |
+| Monte Carlo / scenario regimes | **no — L2** | Deferred per `PROJECT_SCOPE.md` §6 |
+| New ledger schema | **no** | Producer emits rows; ledger row layout unchanged |
+
+Phase 13 closes the **producer-side seat** for distribution income.
+Phase 14 closes the **workbook-ingestion + entity-schema** seat that
+populates the producer config from real SFO data. L19 stays at
+PARTIALLY RESOLVED until Phase 14 — see "L19 status" below.
+
+### Diagnosis
+
+The Phase 12.5 boundary (commit ``9e77fb1``):
+
+```text
+Phase 12.5 lands the consumer-side seat for distributable_income.
+It does not land the producer.
+```
+
+Production runs that select ``spending_base="distributable_income"``
+fail Phase 12.5's zero-income runtime guard because no
+``distribution_inflow`` rows are emitted by anything in the
+orchestrator. The bootstrap path covers q0 + insufficient-history
+runs, but once the realized window has elapsed the household
+appears to have zero distributable income — which is correct given
+no producer, but blocks any non-bootstrap research run.
+
+Phase 13 fills that gap by introducing a deterministic, config-driven
+producer that emits classified ``distribution_inflow`` rows during
+the per-quarter loop.
+
+### Producer ABC + adapter governance
+
+Matches the existing five-family adapter pattern (AllocationAdapter,
+ImplementationAdapter, SpendingRule, PEAdapter — and now
+DistributionProducer):
+
+```python
+# src/aa_model/producers/distribution.py
+
+class DistributionProducer(ABC):
+    """Emits distribution_inflow rows for a given quarter.
+
+    Pure: emit_for_quarter(q) is a deterministic function of the
+    producer's config + q. No ledger reads. No mutation. Idempotent.
+
+    Phase 4a state-flow contract: emissions for quarter q are
+    consumed by the spending rule at quarter q+1 via
+    closed_through(q). The producer therefore must complete its
+    quarter-q emissions BEFORE the orchestrator advances to q+1.
+    The orchestrator wires this in the per-quarter loop.
+    """
+
+    @abstractmethod
+    def emit_for_quarter(
+        self, quarter: pd.Period
+    ) -> tuple[
+        list[DistributionEmission],
+        DistributionProducerDiagnosticsDelta,
+    ]:
+        ...
+
+
+@dataclass(frozen=True)
+class DistributionEmission:
+    amount_usd: float          # > 0; producer enforces
+    source: str                # distribution:<domain>:<id>
+    # Producer-side metadata kept here for the diagnostics path; the
+    # ledger row written from this emission carries only
+    # (amount_usd, source, bucket="cash") so the ledger schema is
+    # unchanged.
+    domain: str
+    recurrence_type: str       # "recurring" | "one_time"
+    confidence: str            # "contractual" | "forecast" | "scenario"
+    producer_id: str           # spec entry id
+
+
+@dataclass(frozen=True)
+class DistributionProducerDiagnosticsDelta:
+    """Per-quarter contributions; the orchestrator accumulates these
+    into a run-level DistributionProducerDiagnostics."""
+    emitted_by_domain_usd: dict[str, float]
+    emitted_by_source_usd: dict[str, float]
+    emitted_by_recurrence_usd: dict[str, float]   # "recurring" / "one_time"
+    emitted_by_confidence_usd: dict[str, float]   # "contractual" / "forecast" / "scenario"
+    excluded_restricted_count: int
+    excluded_restricted_usd: float
+
+
+class ConfigDrivenProducer(DistributionProducer):
+    """Reads a DistributionProducerConfig and emits the entries
+    matching the requested quarter. The user (or a future workbook
+    ingestion in Phase 14) populates the config; no ledger reads
+    here, no entity schema, no tax model.
+    """
+```
+
+The orchestrator constructs the producer via a factory that mirrors
+``make_allocator`` / ``make_pe_adapter``:
+
+```python
+producer = make_distribution_producer(
+    cfg.distribution_producer,
+    engine=cfg.base.distribution_producer.engine,
+)
+```
+
+For Phase 13 ``engine`` is fixed at ``"config"`` (the only available
+adapter). Phase 14 introduces ``"workbook"``.
+
+### ProducerSpec schema
+
+```python
+class DistributionEntryConfig(BaseModel):
+    """One classified distribution event."""
+
+    model_config = _STRICT
+    producer_id: str = Field(min_length=1)            # spec-row id; globally unique
+    domain: Literal[
+        "real_estate",
+        "opco",
+        "land",
+        "development",
+        "portfolio",
+        "entity",
+    ]
+    entity_id: str = Field(min_length=1)
+    asset_id: str | None = None                       # optional finer grain
+    quarter: str                                       # "2026Q1" — Period-parseable
+    amount_usd: float = Field(gt=0.0)
+    recurrence_type: Literal["recurring", "one_time"]
+    confidence: Literal["contractual", "forecast", "scenario"]
+    restricted: bool = False
+    source_reference: str | None = None                # human note; not consumed
+
+    # Hard validators (per-entry):
+    # - quarter parses cleanly via pd.Period(..., freq="Q-DEC")
+    # - amount_usd > 0 + finite
+    # - producer_id is non-empty + URL-safe (no colons — colons are
+    #   reserved for the source convention separator)
+
+
+class DistributionProducerConfig(BaseModel):
+    """Producer-level config. Loaded as a sub-config under StudyConfig
+    via the same _SubConfigRef pattern (e.g., configs/distribution_producer.yaml).
+    """
+    model_config = _STRICT
+    entries: list[DistributionEntryConfig]
+
+    # Cross-entry validators:
+    # - producer_id is globally unique across entries
+    # - domain-recurrence sanity:
+    #   * domain="development" + recurrence_type="recurring" → ValidationError
+    #     (development real estate by definition does not yield recurring
+    #      operating distributions; if the user wants to claim it does,
+    #      they should reclassify as domain="real_estate" with the
+    #      stabilized building's entity/asset id)
+    #   * domain="land" + recurrence_type="recurring" → ValidationError
+    #     (land does not generate recurring distributable cash short of
+    #      an explicit agricultural / extraction lease — Phase 13 treats
+    #      land as one-time-monetization-only)
+```
+
+The schema is deliberately simple. The user (or future workbook
+ingestion) is responsible for **upstream classification** —
+reviewer tightening 1 of Phase 12.5 stands: Phase 13 trusts the
+classification it receives. Hard validators catch only the
+self-evidently nonsensical (development + recurring; land +
+recurring); everything else is a config truthfulness problem the
+spec author owns.
+
+### Per-domain emission rules (HARD vs SOFT)
+
+Each domain entry in the spec follows the same two-step gate:
+
+1. **HARD gates** (validation-time, fails loud at config load):
+   - ``producer_id`` globally unique
+   - ``producer_id`` URL-safe (no colons; colons reserved for the source convention)
+   - ``amount_usd`` strictly positive + finite
+   - ``quarter`` parses as a valid Q-DEC Period
+   - Domain × recurrence sanity (development/recurring; land/recurring → fail)
+
+2. **EMISSION-TIME gates** (per-quarter, applied by the producer):
+   - ``restricted=True`` → skip emission; log into
+     ``excluded_restricted_count`` / ``excluded_restricted_usd``
+   - All other entries matching ``quarter`` → emit ``DistributionEmission``
+     with ``source = f"distribution:{domain}:{asset_id or entity_id}"``
+
+| Domain | Recurring allowed? | One-time allowed? | Standing-principle alignment |
+| --- | :---: | :---: | --- |
+| `real_estate` | yes | yes | Stabilized RE producing recurring rent satisfies "income-producing NAV"; one-time = property-level distribution event (e.g., refi proceeds passed through) |
+| `opco` | yes | yes | OpCo with explicit dividend / distribution schedule = recurring; OpCo with declared one-time return-of-capital = one_time. Both require upstream classification (the spec author says "this is distributable to the FO liquidity pool"). |
+| `land` | **no** | yes | Land has no recurring yield (Phase 13 hard-rejects ``recurring`` for land); only one-time monetization (sale proceeds, agricultural lease bonus payment) qualifies. |
+| `development` | **no** | yes | Development has no recurring yield until the project stabilizes; only one-time events (refi, sale, capital event) qualify. After stabilization, the asset graduates to ``real_estate`` in the spec. |
+| `portfolio` | yes | yes | Recurring = dividends / interest; one-time = special dividend / capital gain distribution. |
+| `entity` | yes | yes | Recurring = scheduled trust distribution; one-time = entity-level capital transfer to FO. The spec author classifies legally; Phase 13 trusts the classification. |
+
+The validation table is reproduced in the producer module's
+docstring so a future contributor can audit it without reading
+the design block.
+
+### Source convention enforcement at emit time
+
+The Phase 12.5 reviewer-tightening-2 convention is:
+
+```text
+source = "distribution:<domain>:<entity_or_asset_id>"
+```
+
+Phase 13 enforces this at emit time. The producer constructs:
+
+```python
+ident = entry.asset_id if entry.asset_id is not None else entry.entity_id
+source = f"distribution:{entry.domain}:{ident}"
+```
+
+If ``entry.entity_id`` or ``entry.asset_id`` contains a colon
+(would break the parse), the schema-level URL-safety validator
+already rejected it. The producer therefore emits a parseable
+source string deterministically.
+
+This locks the Phase 12.5 documented-but-unenforced convention
+into machine-checkable code. Phase 12.5's ``compute_distributable_income_base``
+groups by source for the by-source rollup; with Phase 13, every
+rollup key now follows the canonical convention exactly.
+
+### Restricted handling
+
+``restricted=True`` is the producer-side gate that captures
+"this distribution exists in the underlying entity's books, but is
+not distributable to the FO liquidity pool." Examples:
+
+* RE-LLC retention (rent collected at the property, retained for
+  capex reserve, not distributed to the FO)
+* OpCo working-capital retention
+* Trust distribution scheduled but legally restricted (CRUT
+  payout calendar, gift-tax exclusion ceiling)
+* Entity cash earmarked for an out-of-FO obligation
+
+Restricted entries are **filtered at emit time** — never written
+to the ledger. They appear only in
+``excluded_restricted_count`` / ``excluded_restricted_usd`` for
+the producer-diagnostics report.
+
+This preserves Phase 12.5 reviewer tightening 1 (Phase 12.5 does
+not determine distributability; Phase 13 also does not — the spec
+author marks ``restricted`` upstream, and the producer obeys).
+
+### Recurrence + confidence handling — no ledger schema change
+
+The ledger row schema (`quarter, bucket, flow_type, amount_usd,
+source, run_id`) is unchanged. Recurrence and confidence are
+captured in the **producer-side diagnostics** dataclass and
+surfaced via the report — not as ledger columns and not as
+source-string suffixes (the convention stays single-id-slot per
+Phase 12.5 tightening 2).
+
+The diagnostic surface (``DistributionProducerDiagnostics`` —
+accumulated by the orchestrator across all quarters):
+
+```python
+{
+    "emitted_by_domain_usd": {"real_estate": ..., "opco": ..., ...},
+    "emitted_by_source_usd": {"distribution:real_estate:bldg_a": ..., ...},
+    "emitted_by_recurrence_usd": {"recurring": ..., "one_time": ...},
+    "emitted_by_confidence_usd": {"contractual": ..., "forecast": ..., "scenario": ...},
+    "excluded_restricted_count": <int>,
+    "excluded_restricted_usd": <float>,
+    "top_3_source_concentration_pct": <float>,
+    "one_time_share_pct": <float>,
+}
+```
+
+### Orchestrator integration
+
+Per-quarter loop additions (additive only; existing flow
+unchanged):
+
+```text
+for q in horizon:
+    # ... existing inflow / return / pe / spending steps ...
+
+    # Phase 13: distribution_inflow emissions for this quarter.
+    # FLOW_ORDER places distribution_inflow between inflow and
+    # return, so canonical sort handles intra-quarter ordering
+    # regardless of when add() is actually called inside this
+    # iteration.
+    emissions, dprod_delta = producer.emit_for_quarter(q)
+    for em in emissions:
+        ledger.add(
+            quarter=q,
+            bucket="cash",
+            flow_type="distribution_inflow",
+            amount_usd=em.amount_usd,
+            source=em.source,
+        )
+    distribution_producer_diagnostics.merge(dprod_delta)
+
+    # ... existing rebalance / transaction_cost steps ...
+```
+
+The producer runs **once per quarter**, deterministically, with no
+ledger reads. The Phase 4a state-flow contract is preserved: the
+spending rule at quarter q+1 reads ``closed_through(q)``, which by
+that point includes all of quarter-q's distribution_inflow rows.
+
+The orchestrator's existing total-NAV-conservation check
+(``validate()``) already includes ``distribution_inflow`` in the
+contributing-flows set as of Phase 12.5 — no further ledger change.
+
+### State-flow contract — explicit preservation
+
+Phase 4a contract (read-only, closed-prior-quarter, no mutation,
+q0 owns init):
+
+1. ``ConfigDrivenProducer.emit_for_quarter`` reads only the static
+   producer config — no ledger reads of any kind.
+2. The function is pure; mutates nothing.
+3. Producer-side state is held in a per-run
+   ``DistributionProducerDiagnostics`` accumulator that the
+   orchestrator owns; the producer itself returns a pure delta
+   per quarter and holds no module-level state.
+4. q0 path is untouched. Producer emits q0 rows during the q0
+   iteration; they appear in ``closed_through(q0)`` for the q1
+   iteration just like any other ledger row.
+
+Producer is therefore safe to run inside the deterministic
+single-pass loop; no within-quarter feedback, no fixed-point, no
+sidecar.
+
+### Default-off byte-stability
+
+* ``cfg.distribution_producer is None`` (or
+  ``DistributionProducerConfig(entries=[])``) ⇒ producer emits
+  zero rows ⇒ Phase 12.5 trajectories byte-identical.
+* All existing tests pass unchanged.
+* The ``StudyConfig`` cross-validator gains nothing new for Phase
+  13 — ``distribution_producer`` is optional, defaulting to None.
+* Phase 12.5's ``spending_base="distributable_income"`` runs that
+  previously hit the zero-income runtime guard now have a path
+  forward: configure a producer, populate entries, run.
+* Owl math is **completely unchanged** by Phase 13. The producer
+  just feeds the same flow type Phase 12.5 already consumes.
+
+### Diagnostics + report rendering
+
+New report section ``## Distribution producer (advisory)``,
+gated on ``cfg.distribution_producer is not None`` AND
+producer emitted at least one row:
+
+```markdown
+## Distribution producer (advisory)
+
+- emissions by domain (run total):
+  - real_estate: $ 4,800,000
+  - opco:        $ 1,200,000
+  - portfolio:   $   400,000
+- emissions by recurrence type:
+  - recurring:   $ 5,800,000   (89%)
+  - one_time:    $   600,000   (11%)
+- emissions by confidence:
+  - contractual: $ 5,200,000   (80%)
+  - forecast:    $ 1,200,000   (18%)
+  - scenario:    $   200,000   ( 2%)
+- top-3 sources (by USD, run end):
+  - distribution:real_estate:bldg_a:    $ 2,800,000
+  - distribution:real_estate:bldg_b:    $ 1,800,000
+  - distribution:opco:liv_holding:      $   800,000
+- excluded (restricted=True):
+  - count: 3 entries
+  - dollars: $ 1,400,000
+- regime:
+  - "producer-feed active (config-driven)"
+  - WARNING: top-3 sources account for 80%+ of emissions —
+    high concentration in trailing-income base.
+  - INFO: 18% of emissions are forecast confidence; 2% are
+    scenario confidence — review producer config before
+    relying on the trailing-income rate.
+
+_Phase 13 implements the config-driven producer for
+distribution_inflow rows. Workbook-driven ingestion of real SFO
+income data lands in Phase 14. The producer trusts upstream
+classification (legal/tax/entity-governance distributability,
+recurring vs one-time, restricted flag) per Phase 12.5 reviewer
+tightening 1; it does not determine distributability of its own._
+```
+
+Warning bands:
+
+| Trigger | Threshold | Severity |
+| --- | --- | --- |
+| ``one_time_share_pct`` | ``>= 0.30`` | WARNING — trailing income materially dependent on one-time flows |
+| ``top_3_source_concentration_pct`` | ``>= 0.80`` | WARNING — concentration risk; rate-band reads against a narrow base |
+| ``forecast + scenario`` share | ``>= 0.20`` | WARNING — material non-contractual emissions; confirm spec |
+| ``excluded_restricted_count`` | ``> 0`` | INFO — restricted entries surfaced for transparency |
+
+Producer-side warnings are advisory only — they do not gate Owl's
+trajectory. They DO compose with Phase 12.5's existing
+``## Owl spending base (advisory)`` section: the report renders
+both, and a reader gets the consumer-side view (rate vs base,
+by-source rollup) AND the producer-side view (emissions by
+domain / recurrence / confidence, restricted exclusions).
+
+The Phase 12.5 standing CAVEAT line on recurring-vs-one-time
+remains in the consumer-side section; the producer-side section
+adds **quantification** of that caveat (the share is now visible).
+
+### Tests planned (13)
+
+Schema (4):
+
+1. ``DistributionEntryConfig`` accepts a valid full-fields entry;
+   rejects ``amount_usd <= 0``, non-finite, and unparseable
+   ``quarter``.
+2. ``DistributionEntryConfig.producer_id`` URL-safety: rejects
+   strings containing colons (would break source-convention
+   parsing).
+3. ``DistributionProducerConfig`` rejects duplicate ``producer_id``
+   across entries.
+4. Domain × recurrence sanity:
+   - ``domain="development"`` + ``recurrence_type="recurring"`` → fails
+   - ``domain="land"`` + ``recurrence_type="recurring"`` → fails
+   - All other domain × recurrence combinations validate.
+
+Producer behavior (4):
+
+5. ``ConfigDrivenProducer.emit_for_quarter`` returns the entries
+   matching the requested quarter, with sources formatted exactly as
+   ``"distribution:<domain>:<asset_id-or-entity_id>"``.
+6. ``restricted=True`` entries are filtered at emit time:
+   - Not in the returned emissions
+   - Counted in ``excluded_restricted_count`` /
+     ``excluded_restricted_usd``
+7. ``asset_id``-vs-``entity_id`` precedence: when ``asset_id`` is set,
+   the source uses asset_id; when it is None, falls back to
+   entity_id.
+8. Per-quarter purity: ``emit_for_quarter(q)`` returns the same
+   emissions on repeated calls; no module-level state.
+
+Orchestrator integration (3):
+
+9. ``make_distribution_producer`` returns a ``ConfigDrivenProducer``
+   for ``engine="config"``; rejects unknown engines (Phase 14
+   placeholder).
+10. End-to-end run: a Phase 13 + Phase 12.5 fixture (4-quarter run,
+    real_estate + opco + portfolio entries, no restricted) drives
+    Owl with ``spending_base="distributable_income"``; the realized
+    trailing income matches the sum of producer emissions; the
+    runtime zero-income guard does NOT fire.
+11. Default-off byte-stability: ``cfg.distribution_producer = None``
+    ⇒ Phase 12.5 trajectories byte-identical; existing 251-test
+    suite green.
+
+End-to-end (2):
+
+12. **Producer-diagnostic report renders** with by-domain / by-
+    recurrence / by-confidence / top-3 / excluded-restricted
+    sections; warning bands fire correctly for high concentration
+    and forecast-heavy emissions.
+13. **Composes with Phase 12.5 advisory**: the report renders BOTH
+    ``## Distribution producer (advisory)`` AND ``## Owl spending
+    base (advisory)`` for an Owl run with
+    ``spending_base="distributable_income"`` and a populated
+    producer config; the by-source rollups in the two sections
+    cross-reference cleanly.
+
+### What Phase 13 is **not**
+
+* **Not a workbook ingester.** Phase 14 reads
+  ``Cashflow Modeling v7.xlsx`` and builds a
+  ``DistributionProducerConfig`` from it. Phase 13 stops at the
+  config; whatever populates the config is upstream.
+* **Not an entity ownership waterfall.** The spec author classifies
+  upstream which distributions reach the FO liquidity pool.
+* **Not a tax / withholding model.** Phase 13 trusts upstream
+  net-of-tax classifications.
+* **Not a legal distributability engine.** Phase 12.5 reviewer
+  tightening 1 stands: Phase 13 trusts upstream classification
+  too.
+* **Not a PE distribution opt-in.** ``pe_distribution`` rows still
+  do NOT contribute to the trailing-income rollup; Phase 13.x or
+  later may add an opt-in.
+* **Not a Monte Carlo / stochastic regime.**
+* **Not a scenario-based distribution generator.** The producer is
+  deterministic. Stress / scenario overlays may decorate the
+  spec at higher-level config layers but the producer itself is
+  pure config-driven.
+* **Not a fee-economics or secondary-sale model.**
+* **Not a ledger schema change.** Recurrence and confidence are
+  diagnostic-only and live on the producer side.
+* **Not an allocator / rebalancer / PE math change.**
+* **Not a non-Owl rule change.** flat_real and smoothing remain
+  unaffected.
+
+### L19 status under Phase 13
+
+L19 stays at ``[PARTIALLY RESOLVED]`` after Phase 13 implementation.
+
+Updated wording in the limitations table on Phase 13 implementation:
+
+```
+L19 — PARTIALLY RESOLVED, Phase 12 + 12.5 + 13.
+Spending-rule denominator infrastructure complete (Phase 12 + 12.5);
+config-driven producer for distributable_income shipped (Phase 13).
+Workbook-driven realism (Cashflow Modeling v7.xlsx + entity schema)
+remains dependent on Phase 14.
+```
+
+Equivalently for short-form:
+``L19 producer-side seat shipped (config-driven); workbook-driven
+realism still Phase 14.``
+
+Why not flip to RESOLVED:
+
+* Phase 13 enables a research-grade or hand-authored production
+  run. The model can run end-to-end on a manually populated
+  ``DistributionProducerConfig``.
+* It cannot yet run on the **real Wake Robin household income
+  data** because that data lives in
+  ``Cashflow Modeling v7.xlsx`` and the entity chart, neither of
+  which is ingested. Phase 14 closes that loop.
+* The standing principle ("NAV is not liquidity / Appraisal value
+  is not spending capacity / OpCo value is not automatically
+  distributable capital / Development+land require separate
+  capital-need and monetization assumptions") is now expressible
+  AND enforceable per-domain (Phase 13 hard validators), but not
+  yet **populated** from real-world data.
+
+L19 flips to RESOLVED only after Phase 14 (workbook + entity
+ingestion) lands and the SFO can run end-to-end on real
+household income data.
+
+### Standing-principle audit at the producer layer
+
+Each Phase 13 emission rule is auditable against the four-line
+principle. Locking the audit table here so the design is not
+re-litigated post-implementation:
+
+| Principle | Enforcement at Phase 13 |
+| --- | --- |
+| NAV is not liquidity. | Producer emits **only** classified distributable cash; never reads NAV; never converts appraisal value to liquidity. |
+| Appraisal value is not spending capacity. | No spec entry corresponds to an appraisal mark; appraisal flows are ``pe_nav_mark`` / public-equity ``return`` rows (separate flow types not consumed by ``compute_distributable_income_base``). |
+| OpCo value is not automatically distributable capital. | ``opco`` domain entries require explicit upstream classification; restricted=True filters retained capital; forecast/scenario entries are surfaced separately so a paper OpCo dividend doesn't silently become trailing income. |
+| Development+land require separate capital-need and monetization assumptions. | ``development`` and ``land`` domains hard-reject ``recurring`` at the schema level; only explicit one-time monetization events qualify. Capital calls / draws are out of scope (Phase 13 emits only inflows; outflows are handled elsewhere). |
+
+### Locked design choices
+
+* New module ``src/aa_model/producers/distribution.py`` with
+  ``DistributionProducer`` ABC + ``ConfigDrivenProducer`` concrete.
+* New ``make_distribution_producer(cfg, engine="config")``
+  factory; ``engine`` Literal will extend in Phase 14
+  (``"workbook"``).
+* New Pydantic config ``DistributionProducerConfig`` with
+  ``DistributionEntryConfig`` entries; loaded as a sub-config
+  under ``StudyConfig`` via the ``_SubConfigRef`` pattern;
+  defaults to ``None`` (default-off).
+* Hard schema validators: ``producer_id`` unique + URL-safe
+  (no colons); ``amount_usd`` > 0 + finite; ``quarter`` parses;
+  domain × recurrence sanity (development/recurring; land/recurring
+  → fail).
+* Source convention enforced at emit time:
+  ``f"distribution:{domain}:{asset_id or entity_id}"``.
+* ``restricted=True`` filters at emit time; surfaced in
+  diagnostics; never reaches the ledger.
+* Recurrence and confidence captured **only** in producer
+  diagnostics; ledger row schema unchanged.
+* Producer is pure: no ledger reads, no module state; per-quarter
+  diagnostics returned as a delta the orchestrator accumulates.
+* Orchestrator wires the producer once per quarter via the
+  per-quarter loop; canonical sort handles intra-quarter ordering.
+* Phase 4a state-flow contract preserved verbatim.
+* Default-off byte-stability for every existing fixture, config,
+  and 251-test run.
+* New advisory section ``## Distribution producer (advisory)``
+  in ``report.md``, gated on producer configured + at least one
+  emission.
+* Composes with Phase 12.5's ``## Owl spending base (advisory)``
+  rather than replacing it; readers get both consumer- and
+  producer-side views.
+* PE distributions remain excluded by default (Phase 12.5 stance
+  preserved).
+* L19 stays at ``[PARTIALLY RESOLVED]`` after implementation;
+  Phase 14 (workbook + entity ingestion) is the explicit follow-on
+  that flips L19 to RESOLVED.
+* Phase 13 does NOT determine legal / tax / entity-governance
+  distributability — same upstream-classification posture as
+  Phase 12.5 reviewer tightening 1.
+
+---
+
 ## Change Log
 
 Entries are appended in chronological order. Each entry: date, commit hash,
