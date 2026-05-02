@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from aa_model.io.schemas import StudyConfig
 
-_KNOWN_ALLOCATION_ENGINES: frozenset[str] = frozenset({"stub", "riskfolio"})
+_KNOWN_ALLOCATION_ENGINES: frozenset[str] = frozenset({"stub", "riskfolio", "cvxportfolio"})
 _KNOWN_IMPLEMENTATION_ENGINES: frozenset[str] = frozenset({"stub", "cvxportfolio"})
 
 

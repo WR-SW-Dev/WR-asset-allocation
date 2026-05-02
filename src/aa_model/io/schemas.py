@@ -73,8 +73,9 @@ class AllocationRefConfig(BaseModel):
     model_config = _STRICT
     # Phase 1 supports only the stub. Phase 3 widens this Literal.
     # Stub is the Phase 1 reference implementation; "riskfolio" was added in
-    # Phase 3a behind an opt-in flag. New engines extend this Literal.
-    engine: Literal["stub", "riskfolio"]
+    # Phase 3a behind an opt-in flag. "cvxportfolio" (Phase 4b) is the
+    # cost-aware allocator engine — opt-in. New engines extend this Literal.
+    engine: Literal["stub", "riskfolio", "cvxportfolio"]
     config: str
 
 
@@ -130,6 +131,10 @@ class BaseConfig(BaseModel):
 class PublicAllocationConfig(BaseModel):
     model_config = _STRICT
     stub_weights: dict[str, float]
+    # Phase 4b: cost-aware allocation policy-loss weight. Consumed by the
+    # cvxportfolio allocator engine; ignored by stub / riskfolio. Calibrated
+    # relative to V_total scale — see MODEL_DOCUMENTATION.md §Phase 4b.
+    policy_loss_lambda: float = Field(default=1.0, gt=0.0)
 
     @model_validator(mode="after")
     def _weights_well_formed(self) -> PublicAllocationConfig:

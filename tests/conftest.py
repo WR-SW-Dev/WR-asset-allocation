@@ -166,3 +166,34 @@ def with_cvxportfolio_config(repo_root):
         yield dst
     finally:
         dst.unlink(missing_ok=True)
+
+
+@pytest.fixture
+def with_cvxportfolio_allocation_config(repo_root):
+    """Phase 4b: cost-aware allocation engine end-to-end. Sets
+    allocation.engine = cvxportfolio and a small policy_loss_lambda so
+    target_at exercises the partial-trade branch under non-zero bps.
+    """
+    import yaml
+
+    configs = repo_root / "configs"
+    base_cfg = yaml.safe_load((configs / "base.yaml").read_text(encoding="utf-8"))
+    base_cfg["allocation"] = {
+        "engine": "cvxportfolio",
+        "config": "configs/_test_cvx_alloc_public.yaml",
+    }
+    base_cfg["implementation"] = {"engine": "cvxportfolio", "bps_per_trade": 5.0}
+    base_dst = configs / "_test_cvxportfolio_allocation.yaml"
+    base_dst.write_text(yaml.safe_dump(base_cfg), encoding="utf-8")
+
+    public_alloc = yaml.safe_load(
+        (configs / "public_allocation.yaml").read_text(encoding="utf-8")
+    )
+    public_alloc["policy_loss_lambda"] = 1e-7
+    public_dst = configs / "_test_cvx_alloc_public.yaml"
+    public_dst.write_text(yaml.safe_dump(public_alloc), encoding="utf-8")
+    try:
+        yield base_dst
+    finally:
+        base_dst.unlink(missing_ok=True)
+        public_dst.unlink(missing_ok=True)

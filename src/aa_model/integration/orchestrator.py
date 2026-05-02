@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from aa_model.allocation.base import AllocationParams
 from aa_model.allocation.constraints import Constraints
 from aa_model.allocation.factory import make_allocator
 from aa_model.assumptions.cma import CMA
@@ -130,7 +131,9 @@ def _build_ledger(cfg: StudyConfig, run_id: str) -> tuple[QuarterlyLedger, dict[
 
     alloc = make_allocator(cfg.allocation, engine=cfg.base.allocation.engine)
     alloc.fit(returns=pd.DataFrame(), cma=CMA(), constraints=Constraints())
-    target_weights = alloc.weights()
+    alloc_params = AllocationParams(
+        config=cfg.allocation, start_quarter=start_q, num_quarters=n_q
+    )
     impl = make_implementation(engine=cfg.base.implementation.engine)
     cost_model = CostModel(bps_per_trade=cfg.base.implementation.bps_per_trade)
 
@@ -245,6 +248,16 @@ def _build_ledger(cfg: StudyConfig, run_id: str) -> tuple[QuarterlyLedger, dict[
                 source=rule.SOURCE_ID,
             )
             running_nav["cash"] = running_nav.get("cash", 0.0) - spend_amt
+
+        # 6.5. Phase 4b: cost-aware target. Allocator sees the closed prior
+        # ledger plus the pre-rebalance current dollars at q (running_nav
+        # after steps 0–6); never future state. For stub / riskfolio
+        # engines the default ``target_at`` returns ``weights()`` and this
+        # reduces to the pre-4b static-target behavior bit-for-bit.
+        current_dollars = pd.Series(running_nav, dtype=float)
+        target_weights = alloc.target_at(
+            ledger, alloc_params, q, current_dollars, cost_model
+        )
 
         # 7. rebalance to target weights
         total_nav = sum(running_nav.values())

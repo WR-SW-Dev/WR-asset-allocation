@@ -124,6 +124,26 @@ def test_cvxportfolio_engine_preserves_invariants_under_nonzero_bps(
     assert 0.0 < cum_cost < 1_000_000.0
 
 
+def test_cvxportfolio_allocation_engine_preserves_invariants_end_to_end(
+    with_cvxportfolio_allocation_config,
+):
+    """Phase 4b end-to-end: allocation.engine = cvxportfolio + non-zero bps
+    must not break any ledger invariant. The cost-aware allocator's
+    target_at runs once per quarter; the orchestrator must hand it
+    pre-rebalance current_dollars and consume the canonicalized target.
+    """
+    pytest.importorskip("cvxpy")
+    result = run_orchestrator(with_cvxportfolio_allocation_config, dry_run=False)
+    df = result.ledger
+    assert "rebalance" in df["flow_type"].unique()
+    assert "transaction_cost" in df["flow_type"].unique()
+    # rebalance per quarter still zero-sum (invariant 5.1) — already checked
+    # by the orchestrator's validate(); this is a redundant smoke.
+    rb = df[df["flow_type"] == "rebalance"]
+    for q, sub in rb.groupby("quarter", sort=False):
+        assert abs(float(sub["amount_usd"].sum())) < 1e-6
+
+
 def test_owl_spending_rule_preserves_invariants_end_to_end(with_owl_spending_config):
     """Phase 3c end-to-end: switching spending.rule to 'owl' with a guardrail
     block must not break any ledger invariant. spend rows are still the

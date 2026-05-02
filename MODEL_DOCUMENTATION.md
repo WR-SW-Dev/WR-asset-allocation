@@ -670,7 +670,30 @@ output. Each entry separates **model behavior** (what the code does) from
   fatal would surface as a test failure rather than a silent
   miscalculation.
 
-### L13 — Cvxportfolio adapter has no path dependence
+### L13 — Cvxportfolio adapter has no path dependence — [RESOLVED 2026-05-02, Phase 4b]
+
+> **Status: RESOLVED in Phase 4b.** Cost-aware allocation is now wired
+> via the new `CvxportfolioAllocator` engine. The cost-aware optimizer
+> solves a single convex problem per quarter (dollar-quadratic policy
+> deviation + linear trade cost) using only the explicit
+> `(current_dollars, w_policy, cost_model, λ)` inputs — it does not
+> read the ledger and never sees future quarters. The
+> `ImplementationAdapter.rebalance` adapter remains a pure executor
+> with the Phase 3b signature; cost-awareness moved up the stack to
+> the allocator. Six anchor tests in `tests/test_cost_aware_allocator.py`
+> pin the optimizer's correctness and architectural invariants
+> (zero-cost parity, closed-form 2-bucket partial trade, bucket-order
+> symmetry, monotonicity in bps, path-blindness, spending-untouched);
+> a seventh end-to-end orchestrator test
+> (`test_cvxportfolio_allocation_engine_preserves_invariants_end_to_end`)
+> confirms ledger invariants hold under the new engine.
+>
+> The original Phase 3b text follows for audit-trail purposes — the
+> "two open questions" cited as gates are answered as follows: (1) no
+> multi-period lookahead is wired; the optimizer is single-period and
+> reads only `q-1`-or-earlier closed state. (2) The new anchor set is
+> the closed-form 2-bucket partial-trade tuple, replacing the
+> zero-bps stub-parity anchor that no longer applies.
 
 * **Model behavior.** `CvxportfolioImplementation.rebalance(current,
   target, costs)` is a pure function. Trades depend only on the inputs
@@ -2342,3 +2365,54 @@ what changed, why, impact on outputs, backward-compatibility flag.
   `engine=cvxportfolio` allocator.
 * **Backward-compatible.** Yes. Allocator API extension is additive
   (`weights()` preserved as the cost-blind policy reference).
+
+### 2026-05-02 — Phase 4b implementation: cost-aware allocator
+
+* **What.** Implements the design locked one day prior. Five surfaces
+  touched, no behavior change for any existing config:
+  1. **Schema.** `PublicAllocationConfig.policy_loss_lambda: float =
+     1.0` (gt=0). `AllocationRefConfig.engine` Literal extended with
+     `"cvxportfolio"`. `validate_study_config` accepts the new engine.
+  2. **ABC.** `AllocationAdapter.target_at(ledger, params, quarter,
+     current_dollars, cost_model)` added as a non-abstract method
+     with default body `return self.weights()` — stub and riskfolio
+     adapters inherit unchanged. `AllocationParams` dataclass added
+     mirroring `SpendingParams`.
+  3. **CvxportfolioAllocator.** New
+     `aa_model.allocation.cvxportfolio_adapter.CvxportfolioAllocator`.
+     `weights()` returns the policy reference (config `stub_weights`,
+     same source as the stub adapter). `target_at` solves the single
+     convex problem from the design doc using `cvxpy` + CLARABEL and
+     canonicalizes the output (clip to ≥ 0, round to 12 decimals,
+     correct sum-to-1 by adjustment on the largest-weight bucket).
+     Path-blindness enforced — the method does not read `ledger`.
+     Wired through `make_allocator(engine="cvxportfolio")`.
+  4. **Orchestrator.** Step 6.5 inserted between spend and rebalance:
+     `current_dollars = pd.Series(running_nav)`; `target_weights =
+     alloc.target_at(ledger, alloc_params, q, current_dollars,
+     cost_model)`. The static `target_weights = alloc.weights()` call
+     at run start is removed; the per-quarter target now drives the
+     rebalance step. For `engine=stub` and `engine=riskfolio` the
+     default `target_at` returns `weights()` and the per-quarter
+     target collapses to today's static target.
+  5. **Tests.** Six anchors plus three smoke tests in new
+     `tests/test_cost_aware_allocator.py` (12 tests). One end-to-end
+     orchestrator integration test `test_cvxportfolio_allocation_
+     engine_preserves_invariants_end_to_end` (1 test). Total: **121
+     passed** (was 108 after the 4a hardening).
+* **Why.** L13's "no cost-aware trading decisions" forward-risk
+  closes here. The 4a per-quarter state-flow contract made this
+  possible without reintroducing iteration; the design doc reasoning
+  (cost-in-allocator, dollar-quadratic policy term, explicit
+  `current_dollars` channel, path-blindness) is preserved verbatim.
+* **Impact on outputs.** Zero for every shipped config. All shipped
+  configs use `allocation.engine=stub`; the default `target_at`
+  passthrough produces the same `target_weights` every quarter, so
+  the orchestrator behavior is bit-identical to pre-4b. Output
+  divergence is gated entirely on opting into the new
+  `allocation.engine=cvxportfolio` engine.
+* **Backward-compatible.** Yes. The new schema field has a default
+  (`policy_loss_lambda=1.0`); existing public allocation YAMLs load
+  unchanged. The new engine name is opt-in. Existing test surface
+  green; reproducibility test (same configs + same fixtures →
+  byte-identical ledger) holds.
