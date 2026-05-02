@@ -1610,6 +1610,265 @@ Listed explicitly so a future contributor reads them as guardrails:
 
 ---
 
+## Phase 5 design (pre-implementation)
+
+> **One-line goal.** Replace placeholder allocation assumptions
+> (riskfolio's hard-coded `_DEFAULT_VOL_ANNUAL` table, identity
+> correlation, zero expected returns) with a validated, explicit
+> capital market assumptions layer loaded from a config YAML. **L4
+> closes** when this lands. Strictly assumption-layer work — no
+> objective reformulation, no STAIRS, no PE pacing changes.
+
+### Three load-bearing decisions
+
+#### A. Bucket universe = allocation bucket universe
+
+CMA covers **every** allocation bucket — public sleeves *and* PE
+sleeves. Reason: the allocator solves a constrained MV problem over
+the whole bucket index; if PE has no vol/corr entry the optimizer
+either has to fabricate one (today's fallback) or refuse to run. The
+PE pacing model still drives **realized** PE flows; the CMA gives the
+allocator's *prior view* of PE risk for the optimization. Two
+distinct concerns, both legitimate.
+
+#### B. CMA is a config artifact, not a code constant
+
+Today: `CMA()` instantiated empty in the orchestrator, riskfolio
+adapter falls back to hardcoded numbers. After this design: CMA is
+loaded from a YAML pointed at by `base.cma.config` (parallel to
+`allocation.config`, `spending.config`). Hardcoded fallback is kept
+**for test paths only** (callers passing `CMA()` literally get the
+fallback; runs going through the orchestrator with a real
+`base.yaml` must point at a real CMA YAML).
+
+#### C. CMA is **not** consumed by the cost-aware allocator in Phase 5
+
+> **Important callout (do not assume otherwise).** Phase 5 introduces
+> validated CMA inputs but does **not** wire them into any allocator
+> objective. `CvxportfolioAllocator.target_at` is unchanged — its
+> objective remains
+> ``λ_norm · ||(w − w_policy) · V_total||² + cost_per_dollar · ||trade_dollars||₁``
+> with no return / vol / correlation inputs. CMA is consumed by
+> ``RiskfolioAdapter`` (replaces the placeholder fallback in the
+> MinRisk solve) and by ``report.md`` (diagnostics: portfolio
+> expected return, expected vol). Surfacing CMA inside the cost-aware
+> objective is a Phase 6+ task that requires explicit objective
+> reformulation, design review, and new anchor tests. **Having a
+> populated `expected_returns_annual` field does not mean the
+> optimizer is using it.** This rule preserves the Phase 4b ship's
+> integrity.
+
+### Schema
+
+New `configs/cma.yaml`, validated by a new `CMAConfig` pydantic model
+(`io/schemas.py`):
+
+```yaml
+# configs/cma.yaml
+expected_returns_annual:
+  cash:           0.040
+  public_bond:    0.045
+  public_equity:  0.075
+  pe_buyout:      0.105
+  # ... entry per allocation bucket
+
+vol_annual:
+  cash:           0.005
+  public_bond:    0.040
+  public_equity:  0.160
+  pe_buyout:      0.200
+
+correlations:
+  # full symmetric matrix; every bucket × bucket entry required.
+  # diagonal == 1.0 enforced by the validator.
+  cash:           { cash: 1.0, public_bond: 0.10, public_equity: -0.05, pe_buyout: 0.0 }
+  public_bond:    { cash: 0.10, public_bond: 1.0, public_equity: 0.20, pe_buyout: 0.30 }
+  public_equity:  { cash: -0.05, public_bond: 0.20, public_equity: 1.0, pe_buyout: 0.65 }
+  pe_buyout:      { cash: 0.0, public_bond: 0.30, public_equity: 0.65, pe_buyout: 1.0 }
+
+liquidity:
+  cash:           liquid
+  public_bond:    liquid
+  public_equity:  liquid
+  pe_buyout:      illiquid
+  # optional. Used for liquidity-coverage diagnostics, not the optimizer.
+```
+
+Schema model:
+
+```python
+class CMAConfig(BaseModel):
+    model_config = _STRICT
+    expected_returns_annual: dict[str, float]
+    vol_annual: dict[str, float]
+    correlations: dict[str, dict[str, float]]
+    liquidity: dict[str, Literal["liquid", "semi_liquid", "illiquid"]] | None = None
+```
+
+`base.yaml` gains `cma: { config: configs/cma.yaml }`. `StudyConfig`
+gets a `cma: CMAConfig` field. CMA covers **every** allocation
+bucket; the cross-config validator enforces this.
+
+**Why explicit full matrix, not upper-triangle:** keeps the YAML
+readable as a matrix (every cell visible), eliminates "did I forget
+to list (i,j)?" ambiguity, and the symmetry check becomes a real
+validation rather than an unwritten convention.
+
+### Validation rules
+
+**Pydantic-level (per-file):**
+
+1. ``vol_annual[b] ≥ 0`` for every bucket.
+2. ``expected_returns_annual[b]`` finite (no NaN / inf).
+3. ``|expected_returns_annual[b]| < 1.0`` for every bucket — guards
+   the percent-vs-decimal mistake (a config that sets
+   ``public_equity: 5`` instead of ``0.05`` fails loudly with a
+   bucket-named error). The bound is intentionally far above any
+   realistic annualized expected return (~0.15 max for risk assets);
+   it's a sanity check, not a modeling restriction.
+4. ``correlations[i][j] ∈ [-1.0, 1.0]`` for every cell.
+5. ``correlations[i][i] == 1.0`` within ``1e-9``.
+6. ``correlations[i][j] == correlations[j][i]`` within ``1e-9``
+   (symmetry).
+7. ``expected_returns_annual.keys() == vol_annual.keys() ==
+   correlations.keys()`` (bucket sets agree internally).
+8. Each ``correlations[i].keys()`` matches the global bucket set
+   (no missing entries, no extras).
+9. ``liquidity`` (if present) covers the same bucket set; values
+   restricted to ``{liquid, semi_liquid, illiquid}``.
+
+**Cross-config (`io/validation.py`):**
+
+10. CMA bucket set ``==`` ``allocation.stub_weights.keys()``.
+    Missing or extra buckets fail with a precise diff in the error
+    message.
+11. Computed covariance matrix ``Σ = diag(vol) · corr · diag(vol)``
+    is **PSD** (smallest eigenvalue ≥ ``-1e-9``). The fixed
+    tolerance is intentional — a user-tunable PSD threshold is a
+    validation concern, not a modeling parameter, and exposing it
+    invites silent acceptance of bad inputs.
+
+**Failure mode:** loud and immediate at config load (per SPEC §2.2).
+No silent regularization, no nearest-PSD repair, no automatic
+clipping. PSD failure surfaces as
+``"CMA covariance matrix is not positive semi-definite; smallest
+eigenvalue = X"``.
+
+### Loader and types
+
+``io/loaders.py`` gets ``load_cma_config(path) -> CMAConfig``.
+``assumptions/cma.py``'s ``CMA`` dataclass keeps its current shape
+(``expected_returns_annual: pd.Series``, ``vol_annual: pd.Series``,
+``corr: pd.DataFrame``); a thin adapter
+``CMA.from_config(cfg: CMAConfig) -> CMA`` constructs the dataclass —
+sorted bucket index, explicit ``float`` dtype.
+
+**Reproducibility hashing:** the CMA file content is folded into the
+existing ``fixtures_hash``, so a CMA edit invalidates run
+reproducibility the same way fixture edits do. The manifest gains
+nothing new — ``fixtures_hash`` already covers it.
+
+### Consumers
+
+| consumer | before | after |
+|---|---|---|
+| `RiskfolioAdapter.fit` | empty CMA → falls back to `_DEFAULT_VOL_ANNUAL` + identity corr + zero ER | reads explicit CMA. `_DEFAULT_VOL_ANNUAL` retained but **only** used when `cma == CMA()` (empty default — test-only path). Production callers always pass loaded CMA. |
+| `StubAllocator.fit` | ignores CMA | unchanged |
+| `CvxportfolioAllocator.fit` | accepts CMA, doesn't use in `target_at` | unchanged. CMA is **available** but not consumed; documented as "future cost-aware-with-return-foregone variant." |
+| `report.md` | no CMA section | new "Capital market assumptions" section: per-bucket expected return / vol; portfolio-level expected return (`w_policy · expected_returns`); portfolio expected vol (`sqrt(w_policy.T · Σ · w_policy)`); liquidity bucket counts. |
+
+### Fallback policy
+
+* ``CMA()`` empty default → riskfolio uses hardcoded
+  ``_DEFAULT_VOL_ANNUAL`` + identity corr. **Test-only.** A test
+  marker (e.g., ``_using_test_fallback = True`` in diagnostics) makes
+  this visible.
+* Orchestrator-loaded CMA (default behavior) → adapters use the
+  loaded values; the fallback path is unreachable from production.
+* Removing the fallback entirely is **deferred** to keep the
+  existing test surface green without rewriting fixtures. Once test
+  fixtures migrate to explicit CMA YAMLs the fallback can be deleted
+  in a follow-up.
+* L4 entry flips to ``[RESOLVED]`` when default config + adapters
+  use the loaded CMA in production paths.
+
+### Migration path
+
+The initial shipped ``configs/cma.yaml`` replicates today's defaults
+(values from ``_DEFAULT_VOL_ANNUAL`` + identity correlations + zero
+expected returns) so that:
+
+* existing reports, ledger contents, and reproducibility hashes are
+  byte-stable across the cutover (modulo the new "Capital market
+  assumptions" section in ``report.md``);
+* "real CMA" calibration becomes a separate concern, deferred to
+  whenever empirical inputs are available;
+* the cutover is purely *structural* — the assumption surface
+  becomes config-explicit, but the values being optimized over
+  don't change.
+
+The "real CMA" — non-trivial correlations, calibrated expected
+returns, vol cone — is a deliberate non-goal of Phase 5.
+
+### Tests
+
+New test file ``tests/test_cma_loader.py``:
+
+1. **Round-trip.** Valid YAML → ``CMAConfig`` → ``CMA`` dataclass;
+   index, columns, dtypes, and values match.
+2. **Negative vol fails.** ``vol_annual.public_equity = -0.1``
+   raises with bucket name in message.
+3. **NaN expected return fails.**
+4. **Out-of-bounds expected return fails.**
+   ``expected_returns_annual.public_equity = 5.0`` fails (the
+   percent-vs-decimal guard).
+5. **Out-of-range correlation fails.** ``corr[a][b] = 1.05``.
+6. **Asymmetric correlation fails.**
+   ``corr[a][b] = 0.5; corr[b][a] = 0.4``.
+7. **Diagonal != 1 fails.**
+8. **Bucket-set mismatch fails.** CMA has ``pe_growth`` but
+   allocation has ``pe_buyout`` only; cross-config validator names
+   both missing/extras.
+9. **Non-PSD matrix fails.** Constructed example: pairwise
+   correlations all in ``[-1, 1]``, full matrix has a negative
+   eigenvalue. Error message includes the smallest eigenvalue.
+10. **Liquidity tags optional + validated.** Wrong tag string
+    fails; absent block is fine.
+
+New test in ``tests/test_riskfolio_adapter.py``:
+
+11. **Adapter parity with explicit CMA.** Same numerical anchor as
+    today's binding-equality test, but with the explicit CMA loaded
+    — proves the adapter is reading the loaded values (not the
+    hardcoded fallback).
+
+End-to-end:
+
+12. **Orchestrator picks up CMA.** ``report.md`` contains the new
+    "Capital market assumptions" section with values matching the
+    loaded YAML.
+
+### What Phase 5 is **not**
+
+Listed explicitly so a future contributor reads them as guardrails:
+
+* **Not a STAIRS layer.** Static CMA only; no S-curve, no regime
+  switching, no time-varying inputs.
+* **Not a PE realism change.** PE pacing model untouched; CMA
+  carries PE vol/corr/ER as flat priors.
+* **Not an objective reformulation.** Cost-aware allocator's
+  objective unchanged; CMA available but not consumed there.
+* **Not a return-shock generator.** CMA is a static prior;
+  ``fixture_scenario.returns`` continues to perturb realized returns
+  through separate plumbing.
+* **Not a stress-test layer.** Phase 6+ may add ``correlation_shock``
+  (L6); not in scope here.
+* **Not a Bayesian / Black-Litterman views layer.** Phase 7+ if ever.
+* **Not a calibration helper for ``λ_norm``.** The 4b advisory
+  diagnostic stays separate.
+
+---
+
 ## Change Log
 
 Entries are appended in chronological order. Each entry: date, commit hash,
@@ -2618,3 +2877,51 @@ what changed, why, impact on outputs, backward-compatibility flag.
   parameter is keyword-only with a ``None`` default; existing
   callers (none in tree) continue to work. ``alloc.diagnostics()``
   output is additive.
+
+### 2026-05-02 — Phase 5 design locked (CMA pipeline, pre-implementation)
+
+* **What.** Lock the §Phase 5 design ahead of implementation.
+  Replaces the placeholder allocation assumption surface
+  (``_DEFAULT_VOL_ANNUAL`` table, identity correlation, zero
+  expected returns) with a validated, explicit CMA layer loaded
+  from ``configs/cma.yaml``. Key locked decisions:
+  1. **CMA is config-side, not code-side.** ``base.yaml`` gains a
+     ``cma: { config: configs/cma.yaml }`` reference; loaded by the
+     orchestrator alongside other sub-configs; folded into the
+     ``fixtures_hash`` so a CMA edit invalidates run reproducibility
+     correctly.
+  2. **Bucket universe = full allocation bucket index** (public +
+     PE sleeves). Cross-config validator enforces
+     ``CMA.buckets == allocation.stub_weights.keys()``.
+  3. **Validation is loud and immediate.** Per-cell bounds
+     (``vol ≥ 0``; ``|expected_return| < 1.0`` to catch
+     percent-vs-decimal mistakes; correlations in ``[-1, 1]``);
+     diagonal-1 + symmetry checks; full PSD check on the assembled
+     covariance matrix at fixed tolerance (``-1e-9``). No
+     regularization, no nearest-PSD repair, no clipping.
+  4. **CMA is NOT consumed by the cost-aware allocator in
+     Phase 5.** ``CvxportfolioAllocator.target_at`` is unchanged.
+     CMA is consumed by ``RiskfolioAdapter`` (replaces the
+     placeholder fallback in the MinRisk solve) and by
+     ``report.md`` (new "Capital market assumptions" section with
+     portfolio-level expected return + expected vol). Surfacing
+     CMA inside the cost-aware objective is a Phase 6+ task.
+  5. **Initial shipped values replicate today's defaults**
+     (``_DEFAULT_VOL_ANNUAL`` + identity correlations + zero
+     expected returns), so the cutover is structural — assumption
+     surface becomes config-explicit while reproducibility hashes
+     and ledger contents stay byte-stable.
+  6. **L4 closes** when the implementation lands (placeholder CMA
+     becomes test-only).
+* **Why.** Per audit verdict on the 4b calibration ship —
+  allocation engines are now structurally correct but still fed by
+  placeholder assumptions; CMA is the next-highest-value realism
+  layer. Locking the design ahead of implementation prevents
+  scope creep (no STAIRS, no PE pacing changes, no objective
+  reformulation, no Bayesian views) and pins the
+  CMA-not-used-in-cost-aware-allocator rule before someone
+  reasonably assumes the optimizer must be reading expected returns.
+* **Impact on outputs.** None — design only, no code changes in
+  this commit. When Phase 5 ships, output impact is zero for
+  shipped configs (initial CMA values replicate defaults exactly).
+* **Backward-compatible.** Yes (design only).
