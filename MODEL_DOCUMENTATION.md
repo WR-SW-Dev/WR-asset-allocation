@@ -3944,6 +3944,873 @@ reference becomes accurate.
 
 ---
 
+## Phase 12 design (pre-implementation) — L19 spending base realism
+
+> **One-line goal.** Resolve **L19: Spending base realism for
+> illiquid SFO balance sheets** by introducing a configurable
+> **spending base** that Owl uses in place of total modeled NAV
+> when the user opts in. Default-off; backward-compatible.
+> Replaces "withdrawal rate against total NAV" with "withdrawal
+> rate against spendable resources" for both the *initial* and
+> *current* rate sides of the guardrail trigger, so the rate the
+> household actually faces drives the band check. **Strictly a
+> spending-base fix; does NOT change rate-band logic, absolute
+> clamps (Phase 11), or any allocator / rebalancer / ledger
+> behavior.** Preserves the Phase 4a closed-prior-quarter state-
+> flow contract verbatim. No Monte Carlo, no regime-dependent
+> returns, no PE schema changes, no fee economics, no secondary-
+> sale modelling, no real-estate / OpCo pipeline.
+
+### Required scope tightening — Phase 12 ships *three* modes only
+
+> Phase 12 ships the spending-base modes that are pure functions
+> of CMA tags + NAV-by-bucket on the closed ledger. Modes that
+> require a new *flow type* on the ledger (i.e., realized
+> distribution inflows, separate from `nav_change`) are explicitly
+> **deferred to Phase 12.5** as a follow-on with the explicit
+> ledger-schema change.
+
+| Mode | Phase 12 ships? | Why |
+| --- | --- | --- |
+| `total_nav` | yes (default) | Pure NAV sum; backward-compatible |
+| `liquid_nav` | yes | Pure function of CMA `liquidity` tag + NAV-by-bucket |
+| `liquid_plus_income_producing_nav` | yes | Adds CMA `income_producing` tag (additive optional field) |
+| `custom_policy` | yes | Per-bucket inclusion-weight vector; pure function of CMA tags + NAV |
+| `distributable_income` | **no — Phase 12.5** | Requires new ledger flow type for realized distributions |
+
+Phase 12 therefore lands the **base-side** of L19 — the question
+of *what NAV are we measuring spending against* — and defers the
+**flow-side** (*what cash actually distributed this period*) to a
+follow-on phase that will introduce a `distribution_inflow` flow
+type with its own state-flow contract review.
+
+> **Naming discipline (reviewer tightening 1).** The mode is named
+> ``liquid_plus_income_producing_nav`` — not ``liquid_plus_income``
+> — because **it includes the NAV of buckets tagged
+> ``income_producing``; it does not measure actual distributable
+> income**. A stabilized real-estate bucket may be tagged
+> income-producing because it generates rents, but its **appraised
+> NAV is not automatically spendable**. Phase 12's mode admits the
+> NAV as the closest available approximation; the diagnostic
+> warning surfaces the resulting overstatement. True
+> distributable-income measurement is Phase 12.5.
+
+> **Bucket-level static metadata (reviewer tightening 2).** In
+> Phase 12, ``income_producing`` is a **bucket-level static CMA
+> tag**, not asset-, entity-, or property-level cash-flow
+> classification. It is a pragmatic *bridge* until the entity /
+> cash-flow / RE+OpCo layers (`PROJECT_SCOPE.md` §3.1, §3.3, §3.5)
+> exist and produce per-asset realized-distribution evidence. A
+> future reader must not interpret a True flag as "this bucket's
+> dollars are spendable income"; it means only "this bucket
+> contains assets that, on average, produce some distributable
+> yield." Phase 12.5 (`distributable_income` mode + new
+> `distribution_inflow` ledger flow) is the structurally correct
+> replacement.
+
+### Diagnosis
+
+The L19 algebra (current Owl, post-Phase-11):
+
+```python
+# owl_adapter.py — the two load-bearing lines
+initial_nav_total = float(sum(ledger.initial_nav.values()))
+nav_realized      = float(ledger.end_nav_through(prior_q).sum())
+
+initial_rate = cfg.annual_spend_usd / initial_nav_total
+current_rate = annual_spend            / nav_realized
+```
+
+Both denominators are **total modeled NAV** across every bucket,
+including illiquid private real estate, opco equity, development
+land, and any future stabilized-RE bucket. For a typical Gen3-
+Gen5 SFO balance sheet (25% liquid / 35% PE+credit / 30% private
+RE / 10% OpCo), `total_nav` may be 2-3× the household's actual
+spendable resources. Owl's "4% withdrawal rate" against total
+NAV is a 10-12% withdrawal rate against spendable NAV — and the
+12% is the rate the household actually faces. The guardrail-band
+geometry is correct, but it's measuring against the wrong
+denominator.
+
+**The fix replaces the denominator on both rate sides
+symmetrically** so the band test continues to fire on
+*deviations from the household's true initial rate*, not on
+deviations within an illiquid-padded measurement frame.
+
+### Schema additions
+
+Two new optional fields on ``GuardrailConfig`` and one new
+optional field on ``CMAConfig``. All default to preserve Phase 11
+behavior byte-identically.
+
+```python
+class GuardrailConfig(BaseModel):
+    # ... existing fields preserved ...
+
+    # Phase 12 / L19: optional spending-base selector. Default None
+    # is semantically identical to "total_nav" — Owl measures rate
+    # against ledger.end_nav_through(prior_q).sum() on both rate
+    # sides, byte-identical to Phase 11. When set to a non-None
+    # value, both initial_rate and current_rate denominators are
+    # replaced by compute_spending_base(...) on the same NAV view.
+    # **Owl-only** — flat_real / smoothing have no rate concept.
+    spending_base: Literal[
+        "total_nav",
+        "liquid_nav",
+        "liquid_plus_income_producing_nav",
+        "custom_policy",
+    ] | None = Field(default=None)
+
+    # Phase 12 / L19: only meaningful when spending_base ==
+    # "custom_policy". **Bucket-keyed** (NOT tier-keyed) — gives the
+    # SFO user per-bucket control over inclusion fractions, e.g.
+    # `private_real_estate_stabilized: 0.25` includes 25% of that
+    # specific bucket's NAV in the spending base, independent of
+    # how other illiquid buckets are weighted. A bucket missing from
+    # the dict is treated as weight 0 (excluded). Weights are
+    # **inclusion fractions, not allocation weights** and do NOT sum
+    # to 1.
+    #
+    # Validation (StudyConfig cross-validator, reviewer tightening 3):
+    #   - every key must be a valid CMA bucket
+    #     (i.e., appear in cma.expected_returns_annual)
+    #   - every value must be finite
+    #   - every value must be >= 0
+    #   - at least one value must be > 0
+    #   - unspecified buckets default to weight 0
+    #   - the resulting spending base must be > 0 at every quarter
+    #     where Owl needs the rate denominator (runtime check in
+    #     OwlRule; raises ValueError if violated)
+    spending_base_weights: dict[str, float] | None = Field(default=None)
+
+
+class CMAConfig(BaseModel):
+    # ... existing fields preserved ...
+
+    # Phase 12 / L19: extended liquidity tier set. Adds
+    # "locked_strategic" for OpCo equity, development real estate,
+    # development land, and any other bucket whose value is real
+    # but never enters spending decisions short of an explicit
+    # liquidity event. Existing configs (3-tier) load unchanged
+    # because the new value is purely additive.
+    liquidity: dict[
+        str,
+        Literal["liquid", "semi_liquid", "illiquid", "locked_strategic"],
+    ] | None = None
+
+    # Phase 12 / L19: optional per-bucket flag. Required when
+    # GuardrailConfig.spending_base == "liquid_plus_income_producing_nav".
+    # Validated at the StudyConfig level, not on CMAConfig alone,
+    # because the requirement depends on the spending rule's
+    # selected base.
+    income_producing: dict[str, bool] | None = None
+```
+
+Cross-config validation lives on ``StudyConfig`` (the existing
+home for cross-cutting consistency checks):
+
+* If ``spending.guardrail.spending_base ==
+  "liquid_plus_income_producing_nav"`` then ``cma.income_producing``
+  must be present and cover **every** bucket in
+  ``cma.expected_returns_annual`` (no silent default-False).
+* If ``spending.guardrail.spending_base == "custom_policy"`` then
+  ``spending_base_weights`` must be set and every key must be a
+  valid CMA bucket (i.e., appear in
+  ``cma.expected_returns_annual``). Weights must be finite and
+  non-negative; at least one must be strictly positive. Unknown
+  bucket keys are a hard config error — silent inclusion of a
+  non-existent bucket is **not** a no-op. Unspecified buckets
+  default to weight 0 (explicit exclusion).
+* If any bucket has ``cma.liquidity[b] == "locked_strategic"``,
+  the bucket's NAV is **never** included in any base except
+  ``total_nav`` and ``custom_policy`` with explicit per-bucket
+  weight — a soft default that codifies the standing principle.
+* If ``spending.guardrail.spending_base in {"liquid_nav",
+  "liquid_plus_income_producing_nav", "custom_policy"}`` then
+  ``cma.liquidity`` must be present (covering all buckets); a
+  config that selects a non-`total_nav` base without liquidity
+  tags is a hard error rather than a degenerate fallback.
+
+### Spending base computation (pure function)
+
+```python
+@dataclass(frozen=True)
+class SpendingBaseBreakdown:
+    """Pure data carrier for the diagnostic plumbing."""
+    base_usd: float
+    excluded_by_tier_usd: dict[str, float]
+    excluded_by_income_flag_usd: dict[bool, float]
+
+
+def compute_spending_base(
+    nav_by_bucket: pd.Series,                    # index = bucket, value = USD
+    cma_liquidity: pd.Series | None,             # index = bucket, value = liquidity tier
+    cma_income_producing: pd.Series | None,      # index = bucket, value = bool (or None)
+    spending_base: str | None,                   # GuardrailConfig.spending_base
+    spending_base_weights: dict[str, float] | None,  # bucket-keyed
+) -> SpendingBaseBreakdown:
+    """Pure function. No ledger reads beyond the NAV series passed in.
+    No CMA mutation. No state.
+
+    Diagnostic outputs (NOT alpha signals):
+      - excluded_by_tier_usd: dollars excluded broken out by
+        liquidity tier (liquid / semi_liquid / illiquid /
+        locked_strategic)
+      - excluded_by_income_flag_usd: dollars excluded broken out
+        by income_producing flag (True / False) — surfaces how
+        much of the exclusion is structural-illiquidity vs. lack
+        of distributable yield
+    """
+
+    if spending_base is None or spending_base == "total_nav":
+        return SpendingBaseBreakdown(
+            base_usd=float(nav_by_bucket.sum()),
+            excluded_by_tier_usd={},
+            excluded_by_income_flag_usd={},
+        )
+
+    if spending_base == "liquid_nav":
+        included = nav_by_bucket[cma_liquidity == "liquid"]
+        return SpendingBaseBreakdown(
+            base_usd=float(included.sum()),
+            excluded_by_tier_usd=_excluded_by_tier(
+                nav_by_bucket, cma_liquidity, included.index
+            ),
+            excluded_by_income_flag_usd=_excluded_by_income_flag(
+                nav_by_bucket, cma_income_producing, included.index
+            ),
+        )
+
+    if spending_base == "liquid_plus_income_producing_nav":
+        if cma_income_producing is None:
+            raise ValueError(
+                "spending_base='liquid_plus_income_producing_nav' "
+                "requires cma.income_producing"
+            )
+        liquid_mask = cma_liquidity == "liquid"
+        income_mask = cma_income_producing.fillna(False).astype(bool)
+        included    = nav_by_bucket[liquid_mask | income_mask]
+        return SpendingBaseBreakdown(
+            base_usd=float(included.sum()),
+            excluded_by_tier_usd=_excluded_by_tier(
+                nav_by_bucket, cma_liquidity, included.index
+            ),
+            excluded_by_income_flag_usd=_excluded_by_income_flag(
+                nav_by_bucket, cma_income_producing, included.index
+            ),
+        )
+
+    if spending_base == "custom_policy":
+        if spending_base_weights is None:
+            raise ValueError("spending_base='custom_policy' requires weights")
+        # Per-BUCKET weighted inclusion (reviewer tightening 3 — keys
+        # are bucket names, not liquidity tiers). Unspecified bucket
+        # → weight 0. Validation (valid bucket keys, finite, ≥0,
+        # ≥1 positive) lives on StudyConfig; this function trusts
+        # the validated input but defends against degenerate base
+        # below.
+        weights_per_bucket = pd.Series(
+            {b: float(spending_base_weights.get(b, 0.0)) for b in nav_by_bucket.index},
+            dtype=float,
+        )
+        included_usd = float((nav_by_bucket * weights_per_bucket).sum())
+        # Diagnostic: a bucket with weight w contributes (1-w) of its
+        # NAV to "excluded" for the by-tier and by-income-flag rollups.
+        excluded_usd_per_bucket = nav_by_bucket * (1.0 - weights_per_bucket)
+        return SpendingBaseBreakdown(
+            base_usd=included_usd,
+            excluded_by_tier_usd=_rollup_by_tier(
+                excluded_usd_per_bucket, cma_liquidity
+            ),
+            excluded_by_income_flag_usd=_rollup_by_income_flag(
+                excluded_usd_per_bucket, cma_income_producing
+            ),
+        )
+
+    if spending_base == "distributable_income":
+        raise NotImplementedError(
+            "spending_base='distributable_income' is Phase 12.5 — requires "
+            "the new `distribution_inflow` ledger flow type"
+        )
+
+    raise ValueError(f"unknown spending_base {spending_base!r}")
+```
+
+The OwlRule call site adds one runtime check beyond the
+StudyConfig validators: if ``compute_spending_base`` returns
+``base_usd <= 0`` at a quarter where Owl needs the rate
+denominator, raise ``ValueError`` with the bucket weights and
+NAV-by-bucket so the failure is debuggable. This is the
+"selected base must be > 0 when Owl needs a rate denominator"
+guard from reviewer tightening 3.
+
+The function is **deterministic, single-pass, no fixed-point**.
+It honors the Phase 4a state-flow contract because it reads only
+inputs the orchestrator already had: the NAV-by-bucket series
+from ``ledger.end_nav_through(prior_q)`` and the static CMA tags.
+No new ledger reads, no new state, no within-quarter feedback.
+
+### OwlRule integration
+
+Two-line change inside ``quarterly_outflow_at`` at the year-
+boundary path. Everything else preserved verbatim.
+
+```python
+# Year boundary: inflate, then guardrail-check vs realized base.
+prior_annual = prior_quarterly * 4.0
+annual_spend = prior_annual * (1.0 + cfg.inflation_pct)
+
+# Phase 12 / L19: compute the spending base on the same NAV view
+# used by Phase 11 (closed-through-prior-quarter). When
+# gr.spending_base is None/total_nav, this is byte-identical to
+# the prior code path. When non-None, both rate denominators are
+# the spending base — preserving the rate-band geometry.
+nav_realized_series = ledger.end_nav_through(prior_q)
+realized = compute_spending_base(
+    nav_realized_series,
+    params.cma_liquidity,
+    params.cma_income_producing,
+    gr.spending_base,
+    gr.spending_base_weights,
+)
+
+# Initial-rate denominator uses the SAME base on initial NAV so
+# the rate-band test fires symmetrically. Initial NAV-by-bucket
+# is read from ledger.initial_nav (already pure config).
+initial_nav_series = pd.Series(ledger.initial_nav, dtype=float)
+initial = compute_spending_base(
+    initial_nav_series,
+    params.cma_liquidity,
+    params.cma_income_producing,
+    gr.spending_base,
+    gr.spending_base_weights,
+)
+
+# Reviewer tightening 3 runtime guard: the base must be > 0
+# whenever Owl needs the rate denominator. Detects the
+# pathological config where every weight excludes every bucket
+# the household actually owns, or a quarter in which liquid
+# buckets have drained to zero.
+if initial.base_usd <= 0.0:
+    raise ValueError(
+        f"OwlRule: initial spending base is {initial.base_usd}; "
+        f"selected mode={gr.spending_base!r}; "
+        f"weights={gr.spending_base_weights!r}; "
+        f"initial_nav_by_bucket={dict(initial_nav_series)}"
+    )
+
+if realized.base_usd > 0.0:
+    initial_rate = cfg.annual_spend_usd / initial.base_usd
+    current_rate = annual_spend           / realized.base_usd
+    # ... rate-band trigger UNCHANGED ...
+
+# Phase 11 / L16 absolute clamps UNCHANGED.
+# Quarterly conversion + safety clamp UNCHANGED.
+```
+
+The two ``compute_spending_base`` calls are placed inside the
+``OwlRule`` because the spending-base selector is on
+``GuardrailConfig`` and Owl is the only rule with a guardrail.
+They could be lifted to a higher abstraction in a future phase
+if a non-Owl rule ever needs them; not in scope for Phase 12.
+
+### SpendingParams wire-through
+
+``SpendingParams`` is a frozen dataclass currently holding
+``(config, start_quarter, num_quarters)``. Phase 12 adds two
+optional fields:
+
+```python
+@dataclass(frozen=True)
+class SpendingParams:
+    config: SpendingConfig
+    start_quarter: pd.Period
+    num_quarters: int
+    # Phase 12 / L19: CMA tags surfaced for the Owl spending base.
+    # Optional so flat_real / smoothing call sites don't have to
+    # construct them. OwlRule raises if spending_base != total_nav
+    # and these are absent.
+    cma_liquidity: pd.Series | None = None
+    cma_income_producing: pd.Series | None = None
+```
+
+The orchestrator already constructs ``CMA`` from ``CMAConfig``
+(see ``CMA.from_config``); it threads ``cma.liquidity`` and the
+new ``cma.income_producing`` series into ``SpendingParams`` at
+the same site. No allocator change. No PE change. No ledger
+change. Test fixtures default to ``None`` — preserves the
+default-off byte-stability for every existing test.
+
+### Real-estate / OpCo / development categorization (mapping policy)
+
+Phase 12 does **not** introduce per-bucket category metadata
+(stabilized RE vs development RE vs land vs OpCo) — that lands
+in Phase 13 with the §3.5 RE+OpCo pipeline. For Phase 12, the
+SFO categorization is expressed entirely through the existing
+2-axis CMA metadata: **liquidity tier × income-producing flag**.
+
+Recommended SFO mapping (policy guidance, not enforced):
+
+| Asset category | `liquidity` | `income_producing` | Default base inclusion |
+| --- | --- | --- | --- |
+| Public equity / FI / cash | `liquid` | true (yield) | all bases |
+| Hedge funds (quarterly liq) | `semi_liquid` | varies | excluded except `total_nav` / `custom_policy` |
+| Private equity / credit | `illiquid` | false (lumpy distros) | excluded except `total_nav` / `custom_policy` |
+| Stabilized real estate | `illiquid` | **true** if rented and producing distributable yield | `liquid_plus_income_producing_nav`, `custom_policy`, `total_nav` |
+| Development real estate | `locked_strategic` | false | only `total_nav` / `custom_policy` with explicit weight |
+| Development land | `locked_strategic` | false | only `total_nav` / `custom_policy` with explicit weight |
+| Operating-company equity | `locked_strategic` | false (until distribution policy modeled) | only `total_nav` / `custom_policy` with explicit weight |
+
+Stabilized RE is the deliberate edge case (see open question 3
+below). Tagging it `income_producing=true` admits its **NAV**
+into the `liquid_plus_income_producing_nav` base — which still overstates
+spending capacity vs. its actual distributable yield. Phase 12
+treats this as a knowingly-loose approximation and surfaces the
+overstatement in the diagnostic warning band. Phase 12.5
+(`distributable_income` mode) is the proper fix.
+
+### Open questions — answered
+
+1. **Should default spending base remain total NAV for backward
+   compatibility?** **Yes.** ``GuardrailConfig.spending_base``
+   defaults to ``None``, which short-circuits to total NAV.
+   Existing configs and tests are byte-identical post-Phase-12.
+   Backward compatibility is non-negotiable per the established
+   pattern (Phase 4a, Phase 8, Phase 11).
+
+2. **Should liquid + semi_liquid be the first recommended SFO
+   policy base?** **No — `liquid_plus_income_producing_nav` is.** "Liquid +
+   semi_liquid" mixes a liquidity-tier criterion (semi_liquid)
+   with no income criterion, which lets quarterly-liquidity
+   hedge funds count even when they hold no distributable
+   capacity. ``liquid_plus_income_producing_nav`` matches the standing
+   principle ("Income-producing NAV — assets generating
+   distributable yield") more cleanly. The ``liquid_nav`` mode
+   remains available as the strictest base; `custom_policy` is
+   available for households that want a semi_liquid weight.
+
+3. **Should income-producing-but-illiquid stabilized real estate
+   count in the base, or only its distributable income?** **NAV
+   counts in Phase 12 (with explicit overstatement diagnostic);
+   distributable-income counting is Phase 12.5.** This is the
+   honest position: Phase 12 cannot track realized distributions
+   without a new ledger flow type, so the closest available
+   approximation is "include its NAV when tagged
+   `income_producing=true`." The diagnostic surfaces
+   `excluded_nav_by_tier` and a warning when stabilized-RE NAV is
+   a large fraction of the base, so readers don't mistake the
+   approximation for a tight spending-capacity figure. **The
+   correct fix is Phase 12.5**, which adds a `distribution_inflow`
+   flow type and switches the base to realized distributions over
+   a trailing window. This is documented as a hard follow-on, not
+   a "future work" handwave.
+
+4. **Should development and land be excluded by default?**
+   **Yes.** The recommended mapping tags them
+   `liquidity=locked_strategic`, which excludes them from every
+   base except `total_nav` and a `custom_policy` that explicitly
+   names `locked_strategic` with a non-zero weight. This matches
+   the standing principle line *"Development / land value is not
+   distributable income."* `locked_strategic` is the new fourth
+   tier introduced in Phase 12 specifically to make this mapping
+   declarative.
+
+5. **Should OpCo equity be excluded by default unless explicit
+   distributions are modeled?** **Yes.** Same mechanism — tag
+   OpCo as `locked_strategic`. Future Phase 12.5 enables the
+   user to tag OpCo `income_producing=true` and route its
+   modelled distribution policy through `distribution_inflow`
+   flows, at which point `distributable_income` mode counts the
+   *flow* not the *equity carry*. Phase 12 deliberately does
+   **not** take a position on OpCo equity counting via
+   `liquid_plus_income_producing_nav` — the design forces the user to either
+   leave it locked or commit to a `custom_policy` weight, which
+   keeps the standing-principle line *"OpCo value is not
+   automatically portfolio liquidity"* declaratively visible in
+   the config rather than buried in a default.
+
+### Why this is the minimum fix
+
+* **Two new fields on `GuardrailConfig`** (selector + custom
+  weights) and **one new field on `CMAConfig`**
+  (`income_producing`); the `liquidity` Literal grows by one
+  value (`locked_strategic`). All optional, all default-off.
+* **Default-off byte-stability**: behavior byte-identical to
+  Phase 11 when `spending_base is None`. Same regression
+  guarantee Phase 8 and Phase 11 carried.
+* **Localized to ``OwlRule`` and a single pure helper**: no
+  allocator change, no rebalancer change, no PE change, no
+  ledger schema change, no new flow type, no new diagnostic
+  pipeline.
+* **Preserves the Phase 4a state-flow contract verbatim**:
+  spending base is a pure function of `(closed-through(q-1)
+  NAV-by-bucket, static CMA tags, config)`. No new ledger
+  reads, no new state, no within-quarter feedback, no fixed
+  point, no sidecar.
+* **Scope-conditional resolution**: L19 is closed for the
+  *base-side* of spending realism (which is the L19 ticket as
+  written). The *flow-side* (realized distributions) is split
+  off into Phase 12.5 with its own design block, not silently
+  bundled.
+* **Engine-conditional resolution**: applies to Owl only.
+  flat_real and smoothing have no rate concept and are
+  unaffected. This is consistent with how Phase 11 / L16 was
+  scoped.
+
+### Phase 4a state-flow contract — explicit preservation
+
+The Phase 4a contract (see top of `spending/base.py`) requires
+that a spending rule:
+
+1. Read only `ledger.closed_through(quarter - 1)` /
+   `ledger.end_nav_through(quarter - 1)`.
+2. Not mutate or finalize the ledger.
+3. Filter prior `spend` rows by `source == self.SOURCE_ID`.
+4. Own q0 initialization end-to-end (no guardrail at q0).
+
+Phase 12 honors all four:
+
+1. ``compute_spending_base`` consumes the same NAV view Owl
+   already reads. No additional ledger calls.
+2. The function is pure; it returns a tuple, mutates nothing.
+3. The source filter is unchanged — `_read_own_prior_spend`
+   still keys on `"spending:owl"`.
+4. q0 path is untouched. Spending base is consulted only at the
+   year-boundary trigger, identical to where Owl currently
+   consults `nav_realized`.
+
+The CMA tags threaded through `SpendingParams` are **static
+config**, not ledger state. They cannot violate the closed-
+prior-quarter contract because they are not time-varying within
+a run.
+
+### Diagnostic — `## Owl spending base (advisory)` in `report.md`
+
+New section (separate from the Phase 11 `## Owl scale-sensitivity`
+section so the L16 and L19 narratives don't tangle in a single
+block). The section renders under **two** gating conditions, each
+producing a different framing:
+
+* **Non-default base, Owl fired:** full diagnostic with both
+  exclusion breakdowns + base/total ratio + dual withdrawal rates
+  + warning bands.
+* **Default base (`spending_base = total_nav`), Owl fired, AND
+  ``illiquid`` or ``locked_strategic`` NAV is material** (≥30% of
+  total NAV at run end): a *separate* short warning surfaces that
+  the household has material non-spendable NAV but Owl is still
+  measuring rate against total NAV — pointing the reader at the
+  non-default modes. This is the reviewer-requested warning that
+  catches the "default-on but the SFO needs a non-default base"
+  failure mode.
+
+```markdown
+## Owl spending base (advisory)
+
+- selected base: liquid_plus_income_producing_nav
+- run-end totals:
+  - total NAV:       $123,456,789
+  - spending base:   $ 47,000,000   (38% of total NAV)
+- excluded NAV by liquidity tier:
+  - illiquid:         $ 41,200,000
+  - locked_strategic: $ 35,256,789
+- excluded NAV by income_producing flag:
+  - income_producing=False: $ 76,456,789
+  - income_producing=True:  $          0
+- withdrawal-rate comparison (run end):
+  - rate vs total NAV:      1.62%
+  - rate vs spending base:  4.26%   ← rate the household actually faces
+- regime:
+  - "spending-base aware (selected base materially below total NAV)"
+  - WARNING: spending base is 38% of total NAV; Owl trajectory
+    reflects spending-capacity rate, not paper-NAV rate.
+
+_Phase 12 / L19 closes the base-side of spending realism. The
+flow-side (realized distributions) is Phase 12.5. The
+``liquid_plus_income_producing_nav`` mode includes NAV of
+buckets tagged ``income_producing``; it does not measure actual
+distributable income. Stabilized real estate tagged
+``income_producing=true`` contributes its appraised NAV to this
+base — which still overstates spending capacity vs. its true
+distributable yield. For a tight distributable-income figure
+see Phase 12.5 (`distributable_income` mode + new
+`distribution_inflow` ledger flow type)._
+```
+
+```markdown
+## Owl spending base (advisory)
+
+- selected base: total_nav (default)
+- run-end totals:
+  - total NAV:       $123,456,789
+  - illiquid NAV:    $ 41,200,000   (33% of total NAV)
+  - locked_strategic: $ 35,256,789  (29% of total NAV)
+- WARNING: spending_base = total_nav, but ≥30% of total NAV is
+  illiquid or locked_strategic. Owl is measuring withdrawal rate
+  against paper NAV that is not spendable. Consider setting
+  ``spending.guardrail.spending_base`` to one of:
+  - liquid_nav (strictest)
+  - liquid_plus_income_producing_nav (recommended SFO default;
+    note this includes NAV of income-producing buckets, not
+    distributable income)
+  - custom_policy (per-bucket inclusion weights)
+```
+
+Warning thresholds:
+
+| Trigger | Threshold | Severity |
+| --- | --- | --- |
+| `spending_base / total_nav` | `< 0.7` | WARNING |
+| `spending_base / total_nav` | `< 0.4` | STRONG WARNING — "confirm CMA tagging policy reflects the actual balance sheet" |
+| `spending_base = total_nav` AND `(illiquid + locked_strategic) / total_nav` | `>= 0.30` | WARNING — "material non-spendable NAV; consider a non-default base" |
+
+All thresholds are advisory and configurable in Phase 12.5;
+none gate or alter the Owl trajectory.
+
+`OwlRule.diagnostics()` extends with:
+
+```python
+{
+    "engine": "OwlRule",
+    "min_clamp_activations": <int>,
+    "max_clamp_activations": <int>,
+    # Phase 12 / L19 additions:
+    "spending_base_mode": <str | None>,
+    "spending_base_run_end_usd": <float>,
+    "spending_base_initial_usd": <float>,
+    "total_nav_run_end_usd": <float>,
+    "excluded_nav_by_tier_usd": <dict[str, float]>,
+    "excluded_nav_by_income_flag_usd": <dict[bool, float]>,
+    "withdrawal_rate_vs_total_nav": <float>,
+    "withdrawal_rate_vs_spending_base": <float>,
+    "material_illiquid_share": <float>,  # (illiquid + locked_strategic) / total_nav, run end
+}
+```
+
+Existing `## Owl scale-sensitivity (advisory)` section is left
+unchanged; its L19-caveat language stays in place but reads
+differently when both Phase 11 clamps and Phase 12 base are
+configured (the report renders both sections; readers see them
+as orthogonal concerns, which they are).
+
+### Tests planned (13)
+
+Schema (4):
+
+1. ``GuardrailConfig.spending_base`` defaults to ``None``;
+   accepts the four documented Literals; rejects unknown values
+   at validation time. ``"distributable_income"`` is accepted at
+   schema time (parked in the Literal) but raises
+   ``NotImplementedError("Phase 12.5")`` at runtime when Owl
+   tries to use it.
+2. ``CMAConfig.liquidity`` accepts ``"locked_strategic"`` for at
+   least one bucket; old 3-tier configs still load unchanged.
+3. ``StudyConfig`` cross-validation, positive paths:
+   `liquid_plus_income_producing_nav` with full `cma.income_producing`
+   coverage validates; `custom_policy` with valid bucket-keyed
+   weights validates.
+4. ``StudyConfig`` cross-validation, failure paths (reviewer
+   tightening 3 bucket-keyed weights):
+   - `liquid_plus_income_producing_nav` without
+     `cma.income_producing` → fails loudly
+   - `liquid_plus_income_producing_nav` with `cma.income_producing`
+     missing a bucket → fails loudly (no silent default-False)
+   - `custom_policy` without `spending_base_weights` → fails loudly
+   - `custom_policy` with a key that is not a CMA bucket → fails
+     loudly (silent inclusion of a non-existent bucket is NOT a
+     no-op)
+   - `custom_policy` with a non-finite weight → fails loudly
+   - `custom_policy` with a negative weight → fails loudly
+   - `custom_policy` with all-zero weights → fails loudly (≥1
+     positive weight is required)
+   - non-`total_nav` base without `cma.liquidity` → fails loudly
+
+Behavior — base computation (3):
+
+5. **Total-NAV byte-stability**: `spending_base=None` produces
+   trajectories byte-identical to a `spending_base="total_nav"`
+   run AND byte-identical to the pre-Phase-12 baseline (the
+   default-config golden test).
+6. **Liquid-NAV exclusion + dual breakdown**: a 4-bucket fixture
+   (1 liquid + income, 1 semi_liquid + non-income, 1 illiquid +
+   income (stabilized RE), 1 locked_strategic + non-income) with
+   equal initial NAV. `spending_base="liquid_nav"` returns
+   exactly the liquid bucket's NAV; `excluded_by_tier_usd`
+   accounts for the other three; `excluded_by_income_flag_usd`
+   shows the income/non-income split of the excluded dollars.
+7. **Custom-policy bucket-weighted blend**: weights
+   `{public_eq: 1.0, public_fi: 1.0, hf: 0.5,
+   private_re_stabilized: 0.25, land: 0.0}` on a matching CMA
+   fixture returns the exact dollar-weighted sum to FP
+   tolerance; `excluded_by_tier_usd` and
+   `excluded_by_income_flag_usd` reflect the (1−w)·NAV
+   contributions.
+
+Behavior — Owl integration (4):
+
+8. **Owl trigger fires on spending-base rate, not total-NAV
+   rate**: a fixture where `total_NAV` rate is comfortably in-
+   band but `spending_base` rate is above the upper band → Owl
+   *cuts* spending. The mirror case (in-band on base, above-band
+   on total NAV) is *not* triggered.
+9. **Initial-rate symmetry**: the initial-rate denominator uses
+   the same base as the current-rate denominator. Test
+   constructs a setup where the two would diverge if only one
+   side were swapped, and asserts band geometry is preserved.
+10. **State-flow contract preservation**: a test that calls
+    ``OwlRule.quarterly_outflow_at(t)`` after asserting that the
+    ledger view passed in only contains rows with
+    `quarter <= t-1`; the rule must still produce the documented
+    value (no read from the current quarter).
+11. **Runtime guard — base must be > 0**: a fixture where every
+    weight excludes every bucket the household actually owns at
+    a given quarter → `OwlRule` raises `ValueError` with the
+    bucket weights and NAV-by-bucket in the message (reviewer
+    tightening 3 runtime check).
+
+End-to-end (2):
+
+12. **Non-default report diagnostic renders** for an Owl-rule
+    run with `spending_base="liquid_plus_income_producing_nav"`;
+    the new section is present, classifies the regime correctly,
+    surfaces both `excluded_by_tier_usd` and
+    `excluded_by_income_flag_usd`, surfaces the dual
+    withdrawal-rate comparison, and emits the warning when
+    `base/total < 0.7`.
+13. **Default-base material-illiquid warning** renders when
+    `spending_base=None` (or `total_nav`) AND
+    `(illiquid + locked_strategic) / total_nav >= 0.30` at run
+    end. The warning names all three non-default modes so the
+    reader has the actionable redirect.
+
+### What Phase 12 is **not**
+
+Listed explicitly as guardrails for future contributors:
+
+* **Not a `distributable_income` implementation.** That mode is
+  named in the Literal but raises NotImplementedError in Phase
+  12 if selected; Phase 12.5 lands the new ledger flow type and
+  the realized-distribution accumulator.
+* **Not a real-estate / OpCo pipeline.** Phase 13. Phase 12 does
+  not introduce per-bucket category tags (stabilized vs
+  development vs land vs OpCo); the SFO categorization is
+  expressed via the existing `liquidity × income_producing`
+  axes only.
+* **Not a cash-flow workbook ingestion.** The next phase after
+  L19 closes is `Cashflow Modeling v7.xlsx` ingestion + entity
+  schema (per `PROJECT_SCOPE.md` §6).
+* **Not a Monte Carlo / stochastic upgrade.** L2 remains
+  deferred until the deterministic SFO layers are honest.
+* **Not a regime-dependent returns layer.**
+* **Not a PE schema change.** No `flow_id` upgrade (L5).
+* **Not a fee economics change.**
+* **Not a secondary-sale model.**
+* **Not an allocator / rebalancer change.** The Phase 8
+  illiquidity overlay handles the rebalance side of the standing
+  principle; Phase 12 handles the spending-rule side.
+* **Not a ledger schema change.** The optional fourth liquidity
+  tier (`locked_strategic`) lives on `CMAConfig`, not on the
+  ledger.
+* **Not a non-Owl rule change.** flat_real and smoothing are
+  rate-free; they ignore `spending_base`. The Literal is parked
+  on `GuardrailConfig` (Owl-only) by design.
+
+### L19 status under Phase 12
+
+Will flip to ``[PARTIALLY RESOLVED 2026-05-02, Phase 12]`` —
+**not** RESOLVED — on implementation. The resolution wording in
+the limitations table reads exactly:
+
+```
+L19 — PARTIALLY RESOLVED, Phase 12.
+Base-side spending denominator realism introduced.
+Flow-side distributable-income realism remains open until
+Phase 12.5.
+```
+
+With the explicit notes:
+
+* **Base-side closed**: Owl's withdrawal-rate denominator is
+  configurable across `total_nav`, `liquid_nav`,
+  `liquid_plus_income_producing_nav`, and `custom_policy`. The
+  standing principle's distinction between *total NAV* and
+  *spendable resources* is now expressible in config and visible
+  in the report. Both initial-rate and current-rate denominators
+  are replaced symmetrically; rate-band geometry is preserved.
+* **Flow-side open (Phase 12.5)**: realized distributions are
+  not yet a ledger flow type. `distributable_income` mode is
+  named in the Literal but raises `NotImplementedError` if
+  selected. Stabilized RE counted via the bucket-level
+  `income_producing` flag overstates spending capacity by
+  whatever fraction of NAV is non-distributable carry — this is
+  documented inline in the report diagnostic, not silently
+  absorbed.
+* **Default behavior preserved**: `spending_base=None` ⇒ total
+  NAV, byte-identical to Phase 11. Existing fixtures and the
+  225-test baseline pass unchanged.
+
+L19's **full** resolution requires Phase 12.5 (flow-side). The
+limitation entry is updated to track both halves separately so
+no future reader interprets Phase 12 as closing it entirely.
+
+### Locked design choices
+
+* `GuardrailConfig.spending_base` Literal of four named modes
+  (plus the parked `distributable_income`), default `None` ≡
+  `"total_nav"`.
+* `GuardrailConfig.spending_base_weights` is **bucket-keyed**
+  (`dict[str, float]`), not tier-keyed (reviewer tightening 3).
+  Default `None`, only used by `custom_policy`. Validation:
+  every key is a valid CMA bucket; values are finite, ≥0; ≥1
+  positive value required; unspecified buckets default to
+  weight 0; runtime guard ensures resulting base > 0 when Owl
+  uses it as the rate denominator.
+* `CMAConfig.liquidity` extended to a 4-tier Literal with
+  `"locked_strategic"` as the new value; existing 3-tier configs
+  still load. Required (covering all buckets) when any
+  non-`total_nav` base is selected.
+* `CMAConfig.income_producing` optional `dict[str, bool]`,
+  default `None`. Required by the cross-validator only when
+  `liquid_plus_income_producing_nav` is selected, and must
+  cover every bucket (no silent default-False).
+* `income_producing` is **bucket-level static metadata** in
+  Phase 12, not asset-/entity-/property-level cash-flow
+  classification (reviewer tightening 2). It is a bridge until
+  Phase 12.5's `distribution_inflow` ledger flow type lands.
+* `liquid_plus_income_producing_nav` is named to make the
+  semantics explicit: it includes the **NAV** of buckets tagged
+  `income_producing`; it does **not** measure realized
+  distributable income (reviewer tightening 1).
+* `compute_spending_base` is a pure helper module-private to
+  `aa_model.spending`; returns a frozen `SpendingBaseBreakdown`
+  carrying `base_usd` plus dual exclusion breakdowns
+  (`excluded_by_tier_usd`, `excluded_by_income_flag_usd`).
+  No new public surface beyond the existing `SpendingRule` ABC.
+* OwlRule replaces the `nav_realized` / `initial_nav_total`
+  denominators on **both** rate sides symmetrically. No partial
+  asymmetric variant is supported.
+* Spending base computed against the same `closed-through(q-1)`
+  NAV view Owl already reads. No new ledger access.
+* `SpendingParams` gains two optional CMA-tag fields; non-Owl
+  call sites pass `None`.
+* New advisory section `## Owl spending base` in `report.md`,
+  with two render modes: (a) non-default base full diagnostic,
+  (b) default base + material-illiquid warning. Both gated on
+  Owl + rule-fired.
+* Warning thresholds: WARNING at `base/total < 0.7`; STRONG
+  WARNING at `base/total < 0.4`; default-base material-illiquid
+  WARNING at `(illiquid + locked_strategic) / total_nav >= 0.30`.
+  All advisory, all tunable in Phase 12.5.
+* `distributable_income` mode is **named but not implemented**
+  in Phase 12; selecting it raises
+  `NotImplementedError("Phase 12.5")`.
+* L19 flips to `PARTIALLY RESOLVED` (base-side closed; flow-side
+  open) on implementation. Phase 12.5 is the explicit follow-on.
+* Default-off byte-stability for every existing test fixture and
+  config.
+* Owl-only — flat_real / smoothing have no rate concept.
+
+---
+
 ## Change Log
 
 Entries are appended in chronological order. Each entry: date, commit hash,
