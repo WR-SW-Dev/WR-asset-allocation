@@ -10,21 +10,26 @@ Optimization (single solver call per quarter)
 
 For policy weights ``w_policy``, pre-rebalance dollars ``current_dollars``,
 total NAV ``V_total = current_dollars.sum()``, cost coefficient
-``cost_per_dollar = bps_per_trade / 1e4``, and policy-loss weight ``λ``::
+``cost_per_dollar = bps_per_trade / 1e4``, and **normalized** policy-loss
+weight ``λ_norm`` (config: ``allocation.policy_loss_lambda_norm``)::
 
+    λ_eff         = λ_norm / V_total²
     trade_dollars = w · V_total - current_dollars
 
-    minimize  λ · ‖ w · V_total - w_policy · V_total ‖²
+    minimize  λ_eff · ‖ w · V_total - w_policy · V_total ‖²
             + cost_per_dollar · ‖ trade_dollars ‖₁
     subject to
             Σ w = 1
             0 ≤ w ≤ 1
             min_w ≤ w ≤ max_w  (box constraints from fit())
 
-Both terms are in dollars. ``λ`` has interpretable scale and behavior is
-stable across NAV sizes; the ``trade_dollars`` framing makes per-quarter
-turnover explicit (cost is proportional to trade size, not to position
-deviation from policy). See MODEL_DOCUMENTATION.md §Phase 4b design.
+The ``V_total²`` factor in the policy term cancels against the ``λ_eff``
+divisor, so the user-facing ``λ_norm`` is stable across portfolio sizes
+(at the same fractional deviation, the policy-loss intensity is
+identical regardless of NAV). Both terms are in dollars; the
+``trade_dollars`` framing makes per-quarter turnover explicit (cost is
+proportional to trade size, not to position deviation from policy). See
+MODEL_DOCUMENTATION.md §Phase 4b design.
 
 Contract / discipline
 =====================
@@ -76,12 +81,12 @@ class CvxportfolioAllocator(AllocationAdapter):
 
         self._cvxpy_version = cvxpy.__version__
         self._policy_weights = pd.Series(config.stub_weights, dtype=float).sort_index()
-        self._policy_loss_lambda = float(config.policy_loss_lambda)
+        self._policy_loss_lambda_norm = float(config.policy_loss_lambda_norm)
         self._constraints: Constraints = Constraints()
         self._diagnostics: dict = {
             "engine": "cvxportfolio",
             "cvxpy_version": self._cvxpy_version,
-            "policy_loss_lambda": self._policy_loss_lambda,
+            "policy_loss_lambda_norm": self._policy_loss_lambda_norm,
             "solver": "CLARABEL",
             "round_decimals": _ROUND_DECIMALS,
         }
@@ -131,12 +136,18 @@ class CvxportfolioAllocator(AllocationAdapter):
 
         import cvxpy as cp
 
+        # Normalized λ → effective λ. The V_total² factor in the dollar-
+        # quadratic policy term and the V_total² divisor here cancel
+        # mathematically, so the user-facing λ_norm is scale-invariant in
+        # the policy term. The cvxpy expression is written in the locked
+        # Phase 4b form (V_total factors retained) so the objective text
+        # in code matches MODEL_DOCUMENTATION.md verbatim.
+        lambda_eff = self._policy_loss_lambda_norm / (V_total * V_total)
+
         w = cp.Variable(n, nonneg=True)
         trade_dollars = w * V_total - cur
 
-        policy_loss = self._policy_loss_lambda * cp.sum_squares(
-            (w - w_policy) * V_total
-        )
+        policy_loss = lambda_eff * cp.sum_squares((w - w_policy) * V_total)
         cost_term = cost_per_dollar * cp.norm1(trade_dollars)
 
         constraints: list = [cp.sum(w) == 1.0]

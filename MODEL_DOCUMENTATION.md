@@ -1311,9 +1311,10 @@ listed `rebalance_at` has been corrected.)
 The cost-aware allocator solves, for each quarter `q`:
 
 ```
+λ_eff         = policy_loss_lambda_norm / V_total²
 trade_dollars = w · V_total - current_dollars
 
-minimize  λ · ‖ w · V_total - w_policy · V_total ‖²
+minimize  λ_eff · ‖ w · V_total - w_policy · V_total ‖²
         + cost_per_dollar · ‖ trade_dollars ‖₁
 subject to
         Σ w = 1
@@ -1331,11 +1332,21 @@ with:
 * `cost_per_dollar = bps_per_trade / 1e4` — same coefficient as
   cvxportfolio's `StocksTransactionCost(a)`.
 * `λ` — policy-deviation weight, surfaced as
-  `allocation.policy_loss_lambda` config field, default `1.0`. λ is
-  calibrated relative to the V_total scale; its absolute value is not
-  directly interpretable across portfolios of different size without
-  normalization. Re-tune when transplanting the engine to a portfolio
-  whose initial NAV differs by more than ~1 order of magnitude.
+  `allocation.policy_loss_lambda_norm` config field, default `1.0`.
+  Internally the allocator computes
+  `λ_eff = policy_loss_lambda_norm / V_total²` per quarter; the
+  ``V_total²`` factor in the dollar-quadratic policy term and the
+  divisor cancel mathematically, so the user-facing ``λ_norm`` is
+  scale-invariant in the policy term (at the same fractional weight
+  deviation, the policy-loss intensity is identical regardless of
+  NAV). Note that the **threshold at which partial-trade behavior
+  engages** still scales with ``V_total / λ_norm`` because the L1 cost
+  term is linear in dollars; the normalization fixes the policy
+  term's units, not the policy/cost balance. Calibrate by tuning
+  ``λ_norm`` empirically against the desired
+  partial-trade-vs-policy-track behavior at the portfolio's
+  representative scale. See the §Phase 4b — normalized λ migration
+  note below.
 
 **Why dollar-quadratic policy deviation, not weight-quadratic.** Both
 terms are now in dollars (policy in dollars², cost in dollars). λ has
@@ -2416,3 +2427,53 @@ what changed, why, impact on outputs, backward-compatibility flag.
   unchanged. The new engine name is opt-in. Existing test surface
   green; reproducibility test (same configs + same fixtures →
   byte-identical ledger) holds.
+
+### 2026-05-02 — Phase 4b — normalized λ (`policy_loss_lambda_norm`)
+
+> **Migration.** The `allocation.policy_loss_lambda` field added in
+> the 4b implementation entry above is **renamed** to
+> `allocation.policy_loss_lambda_norm`. To preserve identical
+> numerical behavior under the rename, set
+> `policy_loss_lambda_norm = (old policy_loss_lambda) · V_total²`,
+> where `V_total` is the portfolio NAV the old value was tuned for.
+> No public configs ship with the old field set, so this rename
+> affects only out-of-tree consumers that opted into the
+> `engine=cvxportfolio` allocator between 2026-05-02 and now.
+
+* **What.** User-facing calibration improvement, no objective-form
+  change. The cvxportfolio allocator now stores
+  `policy_loss_lambda_norm` (default `1.0`) and computes the
+  effective coefficient inside `target_at` as
+  `λ_eff = policy_loss_lambda_norm / V_total²`. The cvxpy expression
+  retains the locked Phase 4b form
+  (`λ_eff · ‖(w − w_policy) · V_total‖²`) so the code text matches
+  the design doc verbatim. Mathematically the `V_total²` factor and
+  the `V_total²` divisor cancel — the policy term simplifies to
+  `λ_norm · ‖w − w_policy‖²`. Files touched: `io/schemas.py` (field
+  rename), `allocation/cvxportfolio_adapter.py` (storage + scaling),
+  `tests/test_cost_aware_allocator.py` (migration of test λ values),
+  `tests/conftest.py` (integration fixture).
+* **Why.** Audit observation from the 4b ship: at the dollar-units
+  default `policy_loss_lambda = 1.0`, the policy term scales as
+  `V_total²` and dominates the cost term by `~V_total` orders of
+  magnitude — cost-aware behavior is effectively disabled at any
+  realistic NAV. The user-facing field becomes much more
+  interpretable when the `V_total²` dependency is moved inside the
+  adapter: the default `λ_norm = 1.0` now represents a unitless
+  weight-quadratic intensity, comparable across portfolios. **Caveat
+  the design doc retains:** the L1 cost term is linear in dollars,
+  so the partial-trade *threshold* still scales with
+  `V_total / λ_norm`. Normalization fixes the policy term's units,
+  not the policy/cost balance — calibrate `λ_norm` empirically for
+  the desired partial-trade-vs-policy-track behavior at the
+  portfolio's representative scale.
+* **Scope.** Affects `engine=cvxportfolio` allocator only.
+  `engine=stub` and `engine=riskfolio` ignore the field; their
+  default `target_at` returns `weights()` regardless of `λ_norm`.
+* **Impact on outputs.** Zero for shipped configs (all use
+  `engine=stub`). For out-of-tree `engine=cvxportfolio` consumers,
+  see the migration note above.
+* **Backward-compatible.** Field renamed loudly — pydantic's
+  `extra="forbid"` will fail validation on the old field name. This
+  is the same loud-failure pattern Phase 4a used when removing
+  `forecast_quarterly_return_pct`. 121 tests pass.

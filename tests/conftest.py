@@ -189,7 +189,11 @@ def with_cvxportfolio_allocation_config(repo_root):
     public_alloc = yaml.safe_load(
         (configs / "public_allocation.yaml").read_text(encoding="utf-8")
     )
-    public_alloc["policy_loss_lambda"] = 1e-7
+    # Base config governance.size_usd is $100M; setting λ_norm = 1e9 gives
+    # λ_eff = 1e-7 (= 1e9 / (1e8)²) so the integration test reproduces the
+    # cost-aware behavior used pre-normalization. See MODEL_DOCUMENTATION
+    # §Phase 4b — normalized λ for migration formula.
+    public_alloc["policy_loss_lambda_norm"] = 1e9
     public_dst = configs / "_test_cvx_alloc_public.yaml"
     public_dst.write_text(yaml.safe_dump(public_alloc), encoding="utf-8")
     try:

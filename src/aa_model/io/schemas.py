@@ -131,10 +131,14 @@ class BaseConfig(BaseModel):
 class PublicAllocationConfig(BaseModel):
     model_config = _STRICT
     stub_weights: dict[str, float]
-    # Phase 4b: cost-aware allocation policy-loss weight. Consumed by the
-    # cvxportfolio allocator engine; ignored by stub / riskfolio. Calibrated
-    # relative to V_total scale — see MODEL_DOCUMENTATION.md §Phase 4b.
-    policy_loss_lambda: float = Field(default=1.0, gt=0.0)
+    # Phase 4b: cost-aware allocation policy-loss weight, **normalized**.
+    # The cost-aware allocator computes the effective coefficient as
+    # ``λ_eff = policy_loss_lambda_norm / V_total²`` per quarter, so the
+    # user-facing value is stable across portfolio sizes (the V_total²
+    # factor in the dollar-quadratic policy term cancels). Consumed by
+    # the cvxportfolio allocator engine; ignored by stub / riskfolio.
+    # See MODEL_DOCUMENTATION.md §Phase 4b — normalized λ.
+    policy_loss_lambda_norm: float = Field(default=1.0, gt=0.0)
 
     @model_validator(mode="after")
     def _weights_well_formed(self) -> PublicAllocationConfig:

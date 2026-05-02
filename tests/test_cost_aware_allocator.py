@@ -54,10 +54,10 @@ def _q(s: str) -> pd.Period:
 def _make_cfg(
     weights: dict[str, float],
     *,
-    policy_loss_lambda: float = 1.0,
+    policy_loss_lambda_norm: float = 1.0,
 ) -> PublicAllocationConfig:
     return PublicAllocationConfig(
-        stub_weights=weights, policy_loss_lambda=policy_loss_lambda
+        stub_weights=weights, policy_loss_lambda_norm=policy_loss_lambda_norm
     )
 
 
@@ -130,7 +130,7 @@ def test_closed_form_partial_trade_2bucket():
         w_a*    = u* / V         =  0.55
         w_b*    = 1 - w_a*       =  0.45
     """
-    cfg = _make_cfg({"a": 0.5, "b": 0.5}, policy_loss_lambda=1e-7)
+    cfg = _make_cfg({"a": 0.5, "b": 0.5}, policy_loss_lambda_norm=1e5)
     alloc = CvxportfolioAllocator(cfg)
     alloc.fit(pd.DataFrame(), CMA(), Constraints())
     params = _params(cfg)
@@ -153,7 +153,7 @@ def test_closed_form_no_trade_when_threshold_dominates():
     (no trade). Hand-worked: V = 1e6, c_a = 5.1e5 (just shy of pV = 5e5),
     c = 0.01, λ = 1e-7 → threshold 5e4. |gap| = 1e4 < 5e4 → no trade.
     """
-    cfg = _make_cfg({"a": 0.5, "b": 0.5}, policy_loss_lambda=1e-7)
+    cfg = _make_cfg({"a": 0.5, "b": 0.5}, policy_loss_lambda_norm=1e5)
     alloc = CvxportfolioAllocator(cfg)
     alloc.fit(pd.DataFrame(), CMA(), Constraints())
     params = _params(cfg)
@@ -173,8 +173,8 @@ def test_closed_form_no_trade_when_threshold_dominates():
 
 def test_bucket_order_symmetry():
     """Swapping the bucket axis swaps the outputs."""
-    cfg_ab = _make_cfg({"a": 0.6, "b": 0.4}, policy_loss_lambda=1e-7)
-    cfg_ba = _make_cfg({"b": 0.4, "a": 0.6}, policy_loss_lambda=1e-7)
+    cfg_ab = _make_cfg({"a": 0.6, "b": 0.4}, policy_loss_lambda_norm=1e5)
+    cfg_ba = _make_cfg({"b": 0.4, "a": 0.6}, policy_loss_lambda_norm=1e5)
     alloc_ab = CvxportfolioAllocator(cfg_ab)
     alloc_ba = CvxportfolioAllocator(cfg_ba)
     alloc_ab.fit(pd.DataFrame(), CMA(), Constraints())
@@ -205,7 +205,7 @@ def test_bucket_order_symmetry():
 def test_total_turnover_monotonic_in_bps_n_bucket():
     """Total turnover ‖trade_dollars‖₁ is non-increasing in bps."""
     cfg = _make_cfg(
-        {"a": 0.4, "b": 0.4, "c": 0.2}, policy_loss_lambda=1e-8
+        {"a": 0.4, "b": 0.4, "c": 0.2}, policy_loss_lambda_norm=1e4
     )
     alloc = CvxportfolioAllocator(cfg)
     alloc.fit(pd.DataFrame(), CMA(), Constraints())
@@ -230,7 +230,7 @@ def test_elementwise_monotonic_2bucket():
     """In the 2-bucket case, |trade_i| is provably non-increasing in bps
     for every bucket. (Higher dimensions: only total turnover is.)
     """
-    cfg = _make_cfg({"a": 0.5, "b": 0.5}, policy_loss_lambda=1e-7)
+    cfg = _make_cfg({"a": 0.5, "b": 0.5}, policy_loss_lambda_norm=1e5)
     alloc = CvxportfolioAllocator(cfg)
     alloc.fit(pd.DataFrame(), CMA(), Constraints())
     params = _params(cfg)
@@ -257,7 +257,7 @@ def test_path_blindness_target_independent_of_ledger_history():
     """Two runs with identical (w_policy, current_dollars, cost_model, λ)
     but different ledger histories must produce identical target_at output.
     """
-    cfg = _make_cfg({"a": 0.5, "b": 0.5}, policy_loss_lambda=1e-7)
+    cfg = _make_cfg({"a": 0.5, "b": 0.5}, policy_loss_lambda_norm=1e5)
     alloc = CvxportfolioAllocator(cfg)
     alloc.fit(pd.DataFrame(), CMA(), Constraints())
     params = _params(cfg)
@@ -367,7 +367,7 @@ def test_canonicalization_sum_to_one_exact():
     after canonicalization — required for downstream
     ``target_nav = target_weights * total_nav`` to preserve total NAV.
     """
-    cfg = _make_cfg({"a": 0.6, "b": 0.4}, policy_loss_lambda=1e-7)
+    cfg = _make_cfg({"a": 0.6, "b": 0.4}, policy_loss_lambda_norm=1e5)
     alloc = CvxportfolioAllocator(cfg)
     alloc.fit(pd.DataFrame(), CMA(), Constraints())
     params = _params(cfg)
@@ -382,7 +382,7 @@ def test_canonicalization_sum_to_one_exact():
 
 
 def test_q0_returns_policy():
-    cfg = _make_cfg({"a": 0.6, "b": 0.4}, policy_loss_lambda=1e-7)
+    cfg = _make_cfg({"a": 0.6, "b": 0.4}, policy_loss_lambda_norm=1e5)
     alloc = CvxportfolioAllocator(cfg)
     alloc.fit(pd.DataFrame(), CMA(), Constraints())
     params = _params(cfg)
