@@ -4831,6 +4831,686 @@ no future reader interprets Phase 12 as closing it entirely.
 
 ---
 
+## Phase 12.5 design (pre-implementation) — L19 flow-side: distributable-income spending base
+
+> **One-line goal.** Resolve the **flow-side** of L19 by introducing
+> a new ledger flow type ``distribution_inflow`` and the
+> ``distributable_income`` spending base it feeds. Replaces "withdrawal
+> rate against NAV of income-producing buckets" (Phase 12's
+> ``liquid_plus_income_producing_nav`` approximation) with "withdrawal
+> rate against trailing realized distributable income" — which is the
+> rate the household *actually* faces. **Strictly a flow-side fix; does
+> NOT change Phase 12's base-side modes, the rate-band logic, the
+> absolute clamps, the allocator, or the rebalancer.** Preserves the
+> Phase 4a closed-prior-quarter state-flow contract verbatim.
+>
+> **Phase 12.5 is infrastructure-only on the flow side.** It lands the
+> flow type, the base computation, the schema validation, the report
+> diagnostic, and synthetic-fixture tests — but produces zero
+> ``distribution_inflow`` rows in production runs because **no
+> producer exists yet** (cash-flow ingestion + RE+OpCo pipeline are
+> Phase 13+, per `PROJECT_SCOPE.md` §6 roadmap). Until a producer
+> lands, ``spending_base="distributable_income"`` is configurable and
+> validated end-to-end against fixtures, and raises a runtime
+> ``ValueError`` in any production run that selects it without a
+> populated trailing window. This is intentional: the flow type and
+> the base computation must exist before the producer can feed them.
+
+### Required scope tightening — Phase 12.5 is the *flow type + base* only
+
+| Concern | In scope? | Why |
+| --- | --- | --- |
+| New ``distribution_inflow`` ledger flow type | yes | The structural fix the parked Phase 12 mode needs |
+| ``distributable_income`` base wired into ``compute_spending_base`` | yes | Removes the ``NotImplementedError("Phase 12.5")`` stub |
+| Trailing-window rollup (default 4 quarters) | yes | Smooths lumpy quarterly distributions into an annualized rate |
+| Bootstrap distributable-income value for q0 / insufficient history | yes | The initial-rate denominator must exist before any closed quarter does |
+| Source-string convention for income origin | yes (policy guidance, not strict validation) | Lets diagnostics break out RE / OpCo / dividend / interest |
+| Recurring vs one-time classification | **no — Phase 13** | All ``distribution_inflow`` rows count for now; subdivision is a downstream refinement |
+| ``pe_distribution`` rows opting in | **no — Phase 13** | PE distributions are intrinsically lumpy; mixing them into a trailing-income smoother distorts the rate |
+| Cash-flow workbook ingestion | **no — Phase 14** | Producers come later |
+| RE + OpCo pipeline schema | **no — Phase 13** | Producers come later |
+| Entity schema | **no — Phase 14** | Producers come later |
+
+Phase 12.5 lands the **seat** for distributable income. Populating that
+seat is downstream. This split is the same discipline Phase 12 used:
+schema + base + tests now, producers later.
+
+### Diagnosis
+
+The parked code path in Phase 12:
+
+```python
+# spending_base.py — Phase 12 stub
+if spending_base == "distributable_income":
+    raise NotImplementedError(
+        "spending_base='distributable_income' is Phase 12.5 — requires "
+        "the new `distribution_inflow` ledger flow type"
+    )
+```
+
+The standing-principle line *"Income-producing NAV — assets generating
+distributable yield. Real estate at appraisal but zero current income
+is **not** income-producing for spending purposes"* is honored
+declaratively in Phase 12 (via the ``income_producing`` tag) but only
+*directionally* — the tag still admits the bucket's full NAV, not its
+realized yield. The flow-side fix replaces NAV with yield: sum
+``distribution_inflow`` rows over the trailing window and use that
+dollar figure as the rate denominator. **No more "appraisal-as-income"
+approximation; no more silent overstatement.**
+
+### New ledger flow type
+
+```python
+# integration/ledger.py — FLOW_ORDER additions (additive only; existing
+# flow types preserved verbatim)
+FLOW_ORDER: tuple[str, ...] = (
+    "return",
+    "external_inflow",
+    "distribution_inflow",   # NEW — Phase 12.5 / L19
+    "pe_call",
+    "pe_distribution",
+    "pe_nav_mark",
+    "rebalance",
+    "transaction_cost",
+    "spend",
+)
+```
+
+Sleeve semantics — mirrored on ``external_inflow``:
+
+* ``distribution_inflow`` is **always emitted on the cash bucket** with
+  ``amount_usd > 0``. The dollars represent realized cash distributed
+  by an income-producing source (rent collected, OpCo distribution
+  declared, dividend paid, interest received).
+* The originating bucket's NAV is **unchanged**. A stabilized RE
+  bucket carrying $30M of appraisal value distributes $1M of rent →
+  RE bucket stays at $30M (appraisal carry unaffected); cash bucket
+  gains $1M; total NAV grows by $1M (real wealth was generated).
+* The ``source`` string identifies the originating asset / entity:
+  ``"re_stabilized:<bucket_or_property>"``,
+  ``"opco:<entity_id>"``,
+  ``"dividend:<bucket>"``,
+  ``"interest:<bucket>"``.
+* Source-string format is **policy guidance, not strict
+  validation** in Phase 12.5; future phases may tighten via a
+  controlled vocabulary once Phase 13's RE+OpCo schema lands.
+* ``amount_usd`` must be strictly positive. Negative or zero rows
+  fail at ledger-add time (consistent with the existing ``add()``
+  validation pattern).
+
+Why a new flow type rather than reusing ``external_inflow``:
+
+* ``external_inflow`` semantically represents capital injected from
+  *outside* the modeled portfolio (gifts received, scheduled inflows,
+  external salary). ``distribution_inflow`` represents cash *generated
+  by the portfolio's income-producing assets*. Conflating the two
+  would lose the diagnostic distinction between "household received
+  $X external this period" and "household's income-producing assets
+  yielded $X this period" — which is exactly what L19 needs to
+  separate.
+* The diagnostic in the report relies on this distinction to show
+  trailing-distributable-income separately from any external inflows.
+
+### Schema additions
+
+Two new optional fields on ``GuardrailConfig``. Both default-off;
+both required only when ``spending_base == "distributable_income"``.
+
+```python
+class GuardrailConfig(BaseModel):
+    # ... existing fields preserved through Phase 12 ...
+
+    # Phase 12.5 / L19 flow-side: trailing window for the
+    # distributable_income base. Default 4 quarters (TTM). Smaller
+    # windows are noisier; larger windows lag regime shifts. The
+    # window is rolled forward each year-boundary call; only quarters
+    # in [prior_q - window + 1, prior_q] count. **Required when
+    # spending_base == "distributable_income".**
+    distribution_window_quarters: int | None = Field(
+        default=None, ge=1, le=20
+    )
+
+    # Phase 12.5 / L19 flow-side: bootstrap distributable-income value
+    # used for (a) the initial-rate denominator at run start (no
+    # closed quarters yet) and (b) any year-boundary call where the
+    # closed-prior-quarter window is incomplete (run age < window).
+    # Static USD value the user provides — typically the household's
+    # most recent calendar-year realized distributable income.
+    # **Required when spending_base == "distributable_income".**
+    bootstrap_distributable_income_usd: float | None = Field(
+        default=None, gt=0.0
+    )
+```
+
+Cross-config validation extends ``StudyConfig._phase12_spending_base_cross_config``:
+
+* ``spending_base == "distributable_income"`` requires both
+  ``distribution_window_quarters`` and
+  ``bootstrap_distributable_income_usd`` to be set.
+* The two fields are meaningful **only** for
+  ``distributable_income``; setting them with any other base fails
+  loud (same discipline as Phase 12's
+  ``spending_base_weights``-only-with-``custom_policy`` rule).
+* No CMA-tag requirement: the new base reads ledger flows, not CMA
+  tags. ``cma.liquidity`` and ``cma.income_producing`` are unused
+  for this mode (and explicitly *not* required in the cross-validator
+  for ``distributable_income``).
+
+### Spending-base computation extension
+
+The Phase 12 ``compute_spending_base`` helper is extended to consume
+the closed ledger view (not just the NAV-by-bucket series). To
+preserve the existing pure-function shape, the trailing-distributable-
+income branch is implemented as a thin wrapper that takes both the
+ledger view and the config window/bootstrap values:
+
+```python
+def compute_distributable_income_base(
+    ledger: QuarterlyLedger,
+    prior_q: pd.Period,
+    *,
+    window_quarters: int,
+    bootstrap_usd: float,
+) -> tuple[float, dict[str, float], bool]:
+    """Returns (base_usd, by_source_usd, is_bootstrap).
+
+    Pure function. Reads only ledger.closed_through(prior_q). No CMA
+    access. No state.
+
+    Window definition: sums ``distribution_inflow`` rows where
+    ``prior_q - window_quarters < quarter <= prior_q``. The result
+    is annualized as ``trailing_sum`` (NOT * 4 / window) — i.e., the
+    sum is a literal dollar figure for the trailing N quarters; for
+    a default window of 4, this IS the trailing-12-month figure
+    directly comparable to ``annual_spend_usd``.
+
+    is_bootstrap is True when the realized window does not cover the
+    full ``window_quarters`` (run age too short) AND the trailing sum
+    equals the bootstrap fallback. The diagnostic surfaces this so
+    readers can see which years used realized vs. bootstrap data.
+    """
+    # ... pure-function implementation ...
+```
+
+Integration into the existing ``compute_spending_base``:
+
+```python
+def compute_spending_base(
+    nav_by_bucket: pd.Series,
+    cma_liquidity: pd.Series | None,
+    cma_income_producing: pd.Series | None,
+    spending_base: str | None,
+    spending_base_weights: dict[str, float] | None,
+    *,
+    # Phase 12.5 / L19 flow-side additions — only consumed for the
+    # distributable_income branch. All other branches ignore them.
+    ledger: QuarterlyLedger | None = None,
+    prior_quarter: pd.Period | None = None,
+    distribution_window_quarters: int | None = None,
+    bootstrap_distributable_income_usd: float | None = None,
+) -> SpendingBaseBreakdown:
+    # ... existing branches preserved verbatim ...
+
+    if spending_base == "distributable_income":
+        if ledger is None or prior_quarter is None:
+            raise ValueError(
+                "spending_base='distributable_income' requires ledger "
+                "and prior_quarter at the OwlRule call site"
+            )
+        if distribution_window_quarters is None or bootstrap_distributable_income_usd is None:
+            raise ValueError(
+                "spending_base='distributable_income' requires "
+                "distribution_window_quarters and "
+                "bootstrap_distributable_income_usd on GuardrailConfig"
+            )
+        base, by_source, is_bootstrap = compute_distributable_income_base(
+            ledger,
+            prior_quarter,
+            window_quarters=distribution_window_quarters,
+            bootstrap_usd=bootstrap_distributable_income_usd,
+        )
+        return SpendingBaseBreakdown(
+            base_usd=base,
+            excluded_by_tier_usd={},          # tier rollup not meaningful here
+            excluded_by_income_flag_usd={},   # income-flag rollup not meaningful here
+            # NEW Phase 12.5 fields (additive on the dataclass):
+            distributable_income_by_source_usd=by_source,
+            is_bootstrap=is_bootstrap,
+        )
+```
+
+Note the dataclass extension: ``SpendingBaseBreakdown`` gains two new
+optional fields (``distributable_income_by_source_usd: dict[str, float]
+= {}`` and ``is_bootstrap: bool = False``), defaulting to neutral
+values so all existing call sites remain byte-identical.
+
+### Trailing window — the minimal default
+
+**Default: 4 quarters (trailing 12 months).** Reasons:
+
+* Matches how households think about "annual income" — a TTM figure
+  is the natural read.
+* Smooths quarterly lumpiness without over-smoothing through
+  long-cycle changes (a 20-quarter window would lag regime shifts by
+  years).
+* Aligns directly with ``cfg.annual_spend_usd`` units — the trailing
+  4-quarter sum IS an annual figure, so the rate is
+  ``annual_spend_usd / trailing_4q_sum`` without unit gymnastics.
+
+Configurable via ``distribution_window_quarters`` (range 1-20). Annualized-
+latest-quarter (window=1, multiplied by 4) is **not** introduced — too
+noisy, too sensitive to a single quarterly distribution timing. If a
+user wants it, they can set ``window_quarters=4`` and weight by their
+own business policy outside the model. Phase 12.5 ships the simple
+default-4-quarters policy; complexity adds in Phase 13 if a user
+demonstrates a need.
+
+### q0 / insufficient-history — the bootstrap
+
+**Initial-rate denominator at q0**: there are no closed quarters, so
+the realized trailing sum is zero. Use
+``bootstrap_distributable_income_usd`` as the denominator. This is
+the initial-rate analog of the "static initial spend rate" that the
+existing Owl path already uses (``cfg.annual_spend_usd /
+initial_nav_total`` in Phase 11; ``cfg.annual_spend_usd /
+initial_base`` in Phase 12).
+
+**Year-boundary calls when run age < window_quarters**: the realized
+window does not yet cover the full lookback. Two consistent options:
+
+* **(A) Use realized sum even if window incomplete.** Pro: monotone
+  schedule. Con: a one-quarter run with $200K of distributions
+  produces a $200K base — a 16× overstated rate vs. the eventual
+  steady-state base.
+* **(B) Use bootstrap until window is full, then switch to
+  realized.** Pro: matches user intuition that "bootstrap is the
+  household's real income figure until enough data accumulates."
+  Con: a step function at the window-completion boundary.
+
+**Phase 12.5 picks (B).** The discontinuity is deliberate — it
+mirrors the analogous Phase 11 pattern of a clamp activation showing
+up sharply at the trigger. The diagnostic surfaces the boundary
+explicitly via ``is_bootstrap`` so readers can see which year first
+used realized data.
+
+The cross-validator does not enforce
+``num_quarters >= distribution_window_quarters`` because short
+research-style runs are valid use cases — the user just gets the
+bootstrap rate throughout. The diagnostic warning surfaces "run
+length insufficient for realized window" when applicable.
+
+### Zero-income guard
+
+If the realized trailing sum is exactly ``$0`` *after the bootstrap
+window has elapsed*, the household genuinely has no spendable income
+this period. Asserting a withdrawal rate against zero is meaningless
+and degenerate. The runtime guard:
+
+```python
+if not is_bootstrap and base_usd <= 0.0:
+    raise ValueError(
+        f"OwlRule: realized trailing distributable income is "
+        f"{base_usd}; window={window_quarters}q ending at {prior_q}; "
+        f"by_source={by_source}. The household has no realized "
+        f"distributable income in the closed window. Either wait "
+        f"for a producer-feed quarter, configure a wider window, "
+        f"or switch to a non-flow-side spending base."
+    )
+```
+
+This reuses the Phase 12 ``initial_base <= 0`` guard pattern. Failing
+loud is the right policy: any silent fallback (to bootstrap forever,
+or to total_nav) would mask a real data gap that the household
+operator needs to act on. The error message names the specific
+remediation paths.
+
+### OwlRule integration
+
+Owl already (Phase 12) computes both initial and current rate
+denominators via ``compute_spending_base``. Phase 12.5 threads the
+ledger + prior_quarter + window/bootstrap values through to the
+helper. The integration is:
+
+```python
+# Year boundary path — same shape as Phase 12; new kwargs threaded.
+realized = compute_spending_base(
+    nav_realized_series,
+    params.cma_liquidity,
+    params.cma_income_producing,
+    gr.spending_base,
+    gr.spending_base_weights,
+    ledger=ledger,
+    prior_quarter=prior_q,
+    distribution_window_quarters=gr.distribution_window_quarters,
+    bootstrap_distributable_income_usd=gr.bootstrap_distributable_income_usd,
+)
+
+# Initial-rate denominator: at q0 / first year-boundary, the
+# realized window is empty. The helper short-circuits to the
+# bootstrap value via the is_bootstrap flag — no special-case
+# OwlRule code path needed. Initial NAV-by-bucket is still passed
+# (other modes consume it); for distributable_income, the helper
+# ignores the NAV series entirely.
+initial = compute_spending_base(
+    initial_nav_series,
+    params.cma_liquidity,
+    params.cma_income_producing,
+    gr.spending_base,
+    gr.spending_base_weights,
+    ledger=ledger,
+    prior_quarter=prior_q,
+    distribution_window_quarters=gr.distribution_window_quarters,
+    bootstrap_distributable_income_usd=gr.bootstrap_distributable_income_usd,
+)
+```
+
+The initial-rate denominator is intentionally computed against the
+**same** ledger view the realized denominator uses. At q0 this means
+both initial and realized use the bootstrap value (rate = 1.0 ×
+``annual_spend_usd / bootstrap`` — no drift signal). At later year
+boundaries, both use the realized trailing sum. The symmetry is the
+Phase 12 invariant — preserved verbatim.
+
+### State-flow contract — explicit preservation
+
+Phase 4a contract (read-only, closed-prior-quarter, no mutation, q0
+owns init):
+
+1. ``compute_distributable_income_base`` calls
+   ``ledger.closed_through(prior_q)`` only. No reads of the current
+   quarter; no reads of any future quarter.
+2. The function is pure; mutates nothing.
+3. No source filter is needed for the distribution-inflow rollup
+   itself, but the ``source`` column is read and grouped for the
+   ``by_source`` diagnostic.
+4. q0 path is untouched. The bootstrap value is consulted only at
+   the year-boundary trigger, identical to where Owl currently
+   consults the rate denominator.
+
+The new flow type does not change any existing invariant on the
+ledger:
+
+* ``return`` rows still fire first per quarter / bucket.
+* ``spend`` rows still fire last.
+* ``distribution_inflow`` lives between ``external_inflow`` and
+  ``pe_call`` in ``FLOW_ORDER`` — a sleeve-side ordering choice
+  that puts realized inflows before PE activity within a quarter.
+* No new aggregation invariant; the row sums into cash NAV via the
+  existing chain logic.
+
+### PE handling — explicit exclusion
+
+``pe_distribution`` rows are **NOT** included in the
+``distribution_inflow`` rollup by default. Reasons:
+
+* PE distributions are episodic / lumpy — a single $10M secondary
+  exit in one quarter would dominate a 4-quarter trailing window
+  and produce a 4× overstated rate.
+* PE distributions are already captured separately in the existing
+  PE program structure section of the report (cumulative calls,
+  cumulative distributions, NAV by manager).
+* The standing principle's distinction between "spendable yield"
+  (recurring) and "capital event" (lumpy) supports treating PE as
+  a separate category.
+
+**Future Phase 13.x may add an opt-in flag** (e.g.,
+``GuardrailConfig.include_pe_distributions: bool = False``) once a
+realistic recurring-PE-distribution policy is modeled. Phase 12.5
+deliberately does not introduce this — adding the toggle without
+the supporting recurring/one-time classification would be a footgun.
+
+### Default behavior + byte stability
+
+* ``spending_base=None`` ⇒ ``"total_nav"`` (Phase 12 default
+  unchanged).
+* All Phase 12 modes byte-identical post-Phase-12.5.
+* Adding the new flow type to ``FLOW_ORDER`` is **additive** — no
+  existing fixture emits ``distribution_inflow`` rows, so every
+  existing test trajectory is byte-identical.
+* Adding the two new ``GuardrailConfig`` fields is additive with
+  ``None`` defaults — no existing config rejected at load.
+* Extending ``SpendingBaseBreakdown`` with two new fields with
+  neutral defaults is non-breaking for every existing caller.
+
+### Diagnostic — `## Owl spending base (advisory)` extension
+
+The Phase 12 advisory section gets a third render mode for
+``spending_base="distributable_income"``:
+
+```markdown
+## Owl spending base (advisory)
+
+- selected base: distributable_income
+- run-end totals:
+  - total NAV:                           $123,456,789
+  - trailing distributable income (4q):  $  4,200,000
+  - bootstrap distributable income:      $  4,000,000
+  - source of base this year:            realized   (or "bootstrap")
+- distributable income by source (run end):
+  - re_stabilized: $ 2,800,000
+  - opco:          $   900,000
+  - dividend:      $   300,000
+  - interest:      $   200,000
+- withdrawal-rate comparison (run end):
+  - rate vs total NAV:                  3.24%
+  - rate vs distributable-income base:  100.00%   ← rate the household actually faces
+- regime:
+  - "flow-side aware (selected base = trailing realized income)"
+  - WARNING: rate vs distributable-income base ≥ 100% — household
+    is spending more than it earns; trajectory will erode capital.
+  - INFO: years 1-1 used bootstrap (insufficient closed window);
+    years 2+ used realized trailing.
+
+_Phase 12.5 / L19 fully resolves the flow-side spending realism
+ticket. Distribution rows must be produced by an upstream feeder
+(cash-flow ingestion + RE/OpCo pipeline land in Phase 13/14); until
+that feeder exists, production runs that select this mode will fail
+the realized-window guard. Use the bootstrap-only path for short
+research runs; otherwise wait for Phase 13._
+```
+
+Warning bands:
+
+| Trigger | Threshold | Severity |
+| --- | --- | --- |
+| ``rate vs distributable_income`` | ``>= 1.00`` | STRONG WARNING — spending exceeds income; capital erosion |
+| ``rate vs distributable_income`` | ``>= 0.80`` | WARNING — within 20% of income ceiling |
+| ``is_bootstrap`` for any year ≥ ``window_quarters`` | true | STRONG WARNING — realized window expected but not populated; check producer feed |
+| ``len(by_source_usd) == 1`` AND ``base > 0`` | (concentration) | INFO — single-source income concentration |
+| Realized trailing sum drops > 30% YoY | (regime shift) | INFO — yield regime change; verify policy |
+
+All advisory; none gate Owl's trajectory.
+
+``OwlRule.diagnostics()`` extension (additive on Phase 12 fields):
+
+```python
+{
+    "engine": "OwlRule",
+    # ... Phase 11 + 12 fields preserved verbatim ...
+    # Phase 12.5 / L19 flow-side additions:
+    "trailing_distributable_income_usd": <float>,
+    "distributable_income_by_source_usd": <dict[str, float]>,
+    "distribution_window_quarters": <int | None>,
+    "bootstrap_distributable_income_usd": <float | None>,
+    "used_bootstrap_at_run_end": <bool>,
+}
+```
+
+### Tests planned (13)
+
+Schema (3):
+
+1. ``GuardrailConfig.distribution_window_quarters`` defaults to
+   ``None``; accepts integers in [1, 20]; rejects 0 and 21+ at
+   validation time.
+2. ``GuardrailConfig.bootstrap_distributable_income_usd`` defaults
+   to ``None``; accepts strictly positive finite values; rejects
+   zero and negative.
+3. ``StudyConfig`` cross-validation:
+   - ``spending_base="distributable_income"`` without
+     ``distribution_window_quarters`` → fails loudly
+   - ``spending_base="distributable_income"`` without
+     ``bootstrap_distributable_income_usd`` → fails loudly
+   - ``distribution_window_quarters`` with any other ``spending_base``
+     → fails loudly (analog of Phase 12's
+     ``spending_base_weights`` discipline)
+   - ``bootstrap_distributable_income_usd`` with any other
+     ``spending_base`` → fails loudly
+   - ``spending_base="distributable_income"`` with valid window +
+     bootstrap → validates
+
+Ledger flow type (2):
+
+4. ``ledger.add(flow_type="distribution_inflow", amount_usd=1.0,
+   bucket="cash", source="re_stabilized:building_a")`` succeeds;
+   row appears in ``closed_through`` after finalize; chain extends
+   cash NAV by +$1.
+5. Negative or zero ``amount_usd`` for ``distribution_inflow``
+   fails at ledger-add time.
+
+Base computation (4):
+
+6. **Default-off byte-stability**: ``spending_base=None`` produces
+   trajectories byte-identical to a Phase-12 baseline (the existing
+   239-test suite passes unchanged).
+7. **Distribution rows summed; NAV-only buckets excluded**: a
+   ledger seeded with $1M / $0.5M / $0.7M / $0.3M of
+   ``distribution_inflow`` across q0..q3 PLUS arbitrary NAV across
+   buckets → trailing-4q sum = $2.5M; NAV is irrelevant.
+8. **PE distribution explicitly excluded**: the same ledger plus
+   $5M of ``pe_distribution`` rows → trailing
+   ``distributable_income`` base remains $2.5M (PE rows do NOT
+   leak in).
+9. **By-source rollup correct**: the same ledger with mixed sources
+   → ``by_source_usd`` reports per-source totals matching the seed
+   data.
+
+Bootstrap path (2):
+
+10. **Insufficient-history bootstrap**: a run age of 2 quarters
+    with ``window_quarters=4`` returns
+    ``base_usd == bootstrap_distributable_income_usd`` AND
+    ``is_bootstrap == True``. The diagnostic surfaces "year 1 used
+    bootstrap."
+11. **Window-completion handoff**: a run age of exactly
+    ``window_quarters`` switches to realized; ``is_bootstrap``
+    flips False; the realized trailing sum is used.
+
+Zero-income guard (1):
+
+12. **Realized zero after bootstrap window** → ``OwlRule`` raises
+    ``ValueError`` with the named remediation paths in the message.
+
+End-to-end (1):
+
+13. **Report renders the third advisory mode** for an
+    ``spending_base="distributable_income"`` run; section is
+    present, surfaces by-source rollup, dual rates, regime
+    classification; STRONG WARNING fires when
+    ``rate >= 1.00``.
+
+### What Phase 12.5 is **not**
+
+* **Not a producer for ``distribution_inflow`` rows.** Phase 13 +
+  Phase 14 land producers (RE+OpCo pipeline; cash-flow workbook
+  ingestion). Phase 12.5 is the seat, not the feeder.
+* **Not a recurring/one-time classifier.** All
+  ``distribution_inflow`` rows count toward the trailing window.
+  Phase 13.x may subdivide.
+* **Not a PE distribution opt-in.** Excluded by default; future
+  phase may flag.
+* **Not a cash-flow workbook ingestion.**
+* **Not an entity schema.**
+* **Not a real-estate / OpCo pipeline.**
+* **Not a Monte Carlo / stochastic upgrade.**
+* **Not a regime-dependent returns layer.**
+* **Not a fee economics change.**
+* **Not a secondary-sale model.**
+* **Not an allocator / rebalancer change.**
+* **Not a non-Owl rule change.** flat_real and smoothing remain
+  rate-free; the new flow type does not interact with them.
+* **Not a backwards-compatibility break.** Every Phase 12 fixture,
+  config, and trajectory remains byte-identical.
+
+### L19 status under Phase 12.5
+
+Will flip to ``[RESOLVED 2026-XX-XX, Phase 12.5]`` on
+implementation. The resolution wording in the limitations table
+reads exactly:
+
+```
+L19 — RESOLVED, Phase 12 + Phase 12.5.
+Base-side spending denominator realism (Phase 12, 92c327d) +
+flow-side distributable-income realism (Phase 12.5).
+```
+
+With the explicit notes:
+
+* **Base-side** (Phase 12): four configurable modes against NAV
+  views. Default-off byte-stable.
+* **Flow-side** (Phase 12.5): ``distributable_income`` mode reads
+  realized ``distribution_inflow`` rows over a trailing window.
+  Default-off byte-stable. Pure function preserves Phase 4a
+  contract.
+* **Producer-deferred**: production runs require Phase 13 / 14 to
+  emit ``distribution_inflow`` rows. Phase 12.5 ships the seat;
+  the realized base is unusable in production until producers land.
+  Research/synthetic-fixture runs are fully usable in 12.5.
+* The standing principle ("NAV is not liquidity / Appraisal value
+  is not spending capacity / Development+land value is not
+  distributable income / OpCo value is not automatically portfolio
+  liquidity") is honored on every spending lane: rebalance side
+  via L8 (Phase 8); spending base side via L19 (Phase 12 + 12.5).
+
+### Locked design choices
+
+* New ledger flow type ``distribution_inflow`` added to
+  ``FLOW_ORDER`` between ``external_inflow`` and ``pe_call``.
+* ``distribution_inflow`` is always emitted on the cash bucket
+  with ``amount_usd > 0``; ``source`` string identifies origin
+  (RE / OpCo / dividend / interest).
+* PE distributions (``pe_distribution`` rows) are **not** included
+  in the rollup; future opt-in.
+* ``GuardrailConfig.distribution_window_quarters`` Literal-style
+  ``int | None`` in [1, 20]; required iff
+  ``spending_base == "distributable_income"``.
+* ``GuardrailConfig.bootstrap_distributable_income_usd`` strictly
+  positive ``float | None``; required iff
+  ``spending_base == "distributable_income"``.
+* Default trailing window = **4 quarters (TTM)**. Annualized-
+  latest-quarter explicitly rejected as too noisy.
+* q0 / insufficient-history → use bootstrap value; both initial
+  and current denominators consult the same path so the runtime
+  guard sees consistent state.
+* Window-completion is a **step function**: the year the realized
+  window first covers ``window_quarters`` switches off bootstrap.
+  ``is_bootstrap`` flag surfaces this in the diagnostic.
+* Zero realized trailing sum after the bootstrap window has elapsed
+  → ``OwlRule`` raises ``ValueError`` (no silent fallback).
+* ``compute_spending_base`` extended with ``ledger`` /
+  ``prior_quarter`` / window / bootstrap kwargs (additive,
+  default-off).
+* ``SpendingBaseBreakdown`` extended with
+  ``distributable_income_by_source_usd`` (default ``{}``) and
+  ``is_bootstrap`` (default ``False``).
+* ``OwlRule.diagnostics()`` extended with five new fields
+  (additive on Phase 12).
+* New report-render mode for the ``distributable_income`` base
+  surfaces by-source breakdown, dual withdrawal rates, regime,
+  and the bootstrap-vs-realized history.
+* Source-string format is **policy guidance, not strict
+  validation**; controlled vocabulary deferred to Phase 13.
+* Producer is out of scope: zero ``distribution_inflow`` rows in
+  any existing fixture; production runs that select the mode
+  without a populated window fail the runtime guard loudly.
+* L19 flips to **RESOLVED** on implementation; the limitation
+  table cleanly reflects both halves closed.
+* Default-off byte-stability for every existing fixture, config,
+  and 239-test run.
+* Owl-only — flat_real / smoothing have no rate concept.
+
+---
+
 ## Change Log
 
 Entries are appended in chronological order. Each entry: date, commit hash,
