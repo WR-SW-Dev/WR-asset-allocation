@@ -22,7 +22,6 @@ from pathlib import Path
 import pandas as pd
 import pytest
 import yaml
-
 from aa_model.allocation.liquidity_overlay import (
     LiquidityOverlayDiagnostics,
     apply_liquidity_overlay,
@@ -235,7 +234,6 @@ def test_liquid_nav_zero_with_nonzero_liquid_current_fails_loudly():
     the overlay would have to sell liquid down to zero — which is
     almost certainly an upstream pacing error. Fail loudly.
     """
-    policy = _series({"cash": 0.50, "pe": 0.50})
     # cash=10, pe=-10 → V_total=0, illiquid_current=-10, liquid_nav = 0-(-10)=10 — not zero.
     # Construct: V_total = 100, pe = 100, cash = 0 actually that's what
     # the prior test handled. To get liquid_nav=0 with nonzero liquid

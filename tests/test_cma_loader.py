@@ -13,15 +13,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pandas as pd
 import pytest
 import yaml
-from pydantic import ValidationError
-
 from aa_model.assumptions.cma import CMA
 from aa_model.io.loaders import load_cma_config, load_study_config
 from aa_model.io.schemas import CMAConfig
 from aa_model.io.validation import validate_study_config
+from pydantic import ValidationError
 
 
 def _valid_cma_dict() -> dict:

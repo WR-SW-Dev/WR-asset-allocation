@@ -24,15 +24,13 @@ from pathlib import Path
 import pandas as pd
 import pytest
 import yaml
-from pydantic import ValidationError
-
-from aa_model.io.loaders import load_study_config
 from aa_model.io.schemas import (
     FundConfig,
     PEPacingConfig,
     TADefaultsConfig,
     _FeeModelConfig,
 )
+from pydantic import ValidationError
 
 
 def _ta_defaults() -> TADefaultsConfig:

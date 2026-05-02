@@ -21,7 +21,6 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-
 _TINY_DOLLAR: float = 1.0
 """Threshold for the ``clipped_to_zero_liquid_count`` diagnostic. A
 liquid bucket whose post-overlay execution dollar amount rounds to

@@ -211,7 +211,7 @@ def test_cvxportfolio_allocation_engine_preserves_invariants_end_to_end(
     # rebalance per quarter still zero-sum (invariant 5.1) — already checked
     # by the orchestrator's validate(); this is a redundant smoke.
     rb = df[df["flow_type"] == "rebalance"]
-    for q, sub in rb.groupby("quarter", sort=False):
+    for _q, sub in rb.groupby("quarter", sort=False):
         assert abs(float(sub["amount_usd"].sum())) < 1e-6
 
 

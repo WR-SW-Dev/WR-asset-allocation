@@ -41,7 +41,6 @@ if TYPE_CHECKING:
     from aa_model.io.schemas import (
         FundConfig,
         PEPacingConfig,
-        StairsDefaultsConfig,
         TADefaultsConfig,
     )
 

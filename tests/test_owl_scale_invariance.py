@@ -38,8 +38,6 @@ from pathlib import Path
 import pandas as pd
 import pytest
 import yaml
-from pydantic import ValidationError
-
 from aa_model.integration.ledger import QuarterlyLedger
 from aa_model.io.schemas import (
     GuardrailConfig,
@@ -48,6 +46,7 @@ from aa_model.io.schemas import (
 )
 from aa_model.spending.base import SpendingParams
 from aa_model.spending.owl_adapter import OwlRule
+from pydantic import ValidationError
 
 
 def _q(s: str) -> pd.Period:
@@ -259,7 +258,7 @@ def test_owl_path_is_scale_invariant_in_initial_nav():
 
     # Trajectories scale by 10× at every quarter. The *ratios* are
     # identical because Owl is rate-based + scale-invariant.
-    for s, l_ in zip(quarterly_small, quarterly_large):
+    for s, l_ in zip(quarterly_small, quarterly_large, strict=False):
         assert s > 0
         assert abs(l_ / s - 10.0) < 1e-9, (
             f"scale-invariance broken: small={s}, large={l_}, "
@@ -278,7 +277,6 @@ def test_owl_diverges_under_absolute_floor():
     from the same dollar floor — continues to cut on its own
     rate-band trajectory. Trajectories diverge → L16 closure proven.
     """
-    n_quarters = 16
     # Sustained drawdown so cut path fires; small fund hits floor
     # after one or two cuts.
     returns = [-0.20] * 4 + [-0.10] * 4 + [-0.05] * 4 + [0.0] * 4
@@ -329,7 +327,7 @@ def test_owl_diverges_under_absolute_floor():
     # (proportional setup, no clamp yet) and diverges once the
     # small-fund clamp binds — direct proof that L16 invariance is
     # broken when the absolute clamp is set.
-    ratios = [l_ / s for s, l_ in zip(quarterly_small, quarterly_large) if s > 0]
+    ratios = [l_ / s for s, l_ in zip(quarterly_small, quarterly_large, strict=False) if s > 0]
     assert max(ratios) - min(ratios) > 0.5, (
         f"trajectories did not diverge under floor; ratios = {ratios}"
     )
@@ -351,7 +349,6 @@ def test_cut_path_pins_at_absolute_floor_via_prior_feedback():
     feedback loop, not the depth of the cut sequence.
     """
     floor_usd = 3_700_000.0  # $3.7M; first cut to $3.69M ≈ at floor
-    n_quarters = 16
     returns = [-0.20] * 4 + [-0.10] * 4 + [-0.05] * 4 + [0.0] * 4
 
     cfg = _spending_cfg(

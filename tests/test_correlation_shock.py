@@ -20,8 +20,6 @@ from __future__ import annotations
 import math
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
-
 from aa_model.assumptions.correlation_shock import apply_correlation_shock
 from aa_model.io.schemas import (
     CMAConfig,
@@ -29,6 +27,7 @@ from aa_model.io.schemas import (
     _OverrideCorrelationShock,
     _ScaleCorrelationShock,
 )
+from pydantic import TypeAdapter, ValidationError
 
 
 def _identity_cma() -> CMAConfig:

@@ -24,8 +24,6 @@ from pathlib import Path
 import pandas as pd
 import pytest
 import yaml
-from pydantic import ValidationError
-
 from aa_model.assumptions.cma import CMA
 from aa_model.io.loaders import load_study_config
 from aa_model.io.schemas import (
@@ -37,6 +35,7 @@ from aa_model.io.validation import validate_study_config
 from aa_model.pe.factory import make_pe_adapter
 from aa_model.pe.stairs_adapter import STAIRSAdapter
 from aa_model.pe.ta_adapter import TAAdapter
+from pydantic import ValidationError
 
 
 def _q(s: str) -> pd.Period:
@@ -335,7 +334,7 @@ def test_idiosyncratic_drift_monotonic_at_zero_beta(repo_root: Path):
             float(proj.groupby("fund_name").tail(1)["nav_end_usd"].sum())
         )
     # Strictly increasing.
-    for prev, nxt in zip(terminal, terminal[1:]):
+    for prev, nxt in zip(terminal, terminal[1:], strict=False):
         assert nxt > prev + 1e-6, f"non-monotonic in drift: {terminal}"
 
 

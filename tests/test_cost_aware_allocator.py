@@ -30,7 +30,6 @@ See MODEL_DOCUMENTATION.md §Phase 4b design.
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -246,7 +245,7 @@ def test_total_turnover_monotonic_in_bps_n_bucket():
         turnovers.append(float(trade))
 
     # Strictly non-increasing (allow 1e-6 USD slack for solver tol).
-    for prev, nxt in zip(turnovers, turnovers[1:]):
+    for prev, nxt in zip(turnovers, turnovers[1:], strict=False):
         assert nxt <= prev + 1e-6, f"turnover not monotonic: {turnovers}"
 
 

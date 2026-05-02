@@ -449,25 +449,9 @@ def write_markdown_report(
             # using the per-fund cumulative net of (calls - distributions
             # + nav_marks) which equals the projection's nav_end_usd at
             # the last quarter that fund appeared).
-            last_per_fund = (
-                pe_rows.sort_values(["fund_name", "quarter"])
-                .groupby("fund_name")
-                .agg(
-                    cum_call=(
-                        "amount_usd",
-                        lambda s: float(
-                            pe_rows.loc[s.index][
-                                (pe_rows.loc[s.index]["flow_type"] == "pe_call")
-                                & (pe_rows.loc[s.index]["amount_usd"] > 0)
-                            ]["amount_usd"].sum()
-                        ),
-                    ),
-                )
-            )
-            # Simpler: per fund, cumulative pe_call (positive sleeve
-            # side) - cumulative pe_distribution (positive sleeve
-            # negative → use abs) + cumulative pe_nav_mark =
-            # end-of-horizon NAV.
+            # Per fund: cumulative pe_call (positive sleeve side)
+            # - cumulative pe_distribution (negative on sleeve) +
+            # cumulative pe_nav_mark = end-of-horizon NAV.
             per_fund_nav = {}
             for fname in pe_rows["fund_name"].unique():
                 sub = pe_rows[pe_rows["fund_name"] == fname]
