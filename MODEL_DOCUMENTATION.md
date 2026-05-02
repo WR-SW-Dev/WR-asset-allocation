@@ -2477,6 +2477,298 @@ implementation. Resolution wording:
 
 ---
 
+## Phase 8 design (pre-implementation) — PE illiquidity in rebalancing (L8)
+
+> **One-line goal.** Resolve L8: the rebalancer treats PE buckets as
+> liquid. Phase 8 inserts an **illiquidity overlay** between the
+> allocator's policy target and the implementation's rebalance call,
+> using CMA liquidity tags as the source of truth. PE exposure can
+> only change through ``pe_call`` / ``pe_distribution`` /
+> ``pe_nav_mark`` flows — the rebalancer no longer trades PE.
+> **Default-on as a correctness fix**, not opt-in; out-of-tree
+> regression comparisons keep an internal-only opt-out flag.
+
+### Core principle
+
+```
+PE (any bucket tagged illiquid) is non-tradable in rebalance.
+```
+
+Rebalance trades for illiquid buckets are forced to zero. PE calls,
+distributions, and NAV marks are **unchanged** — those remain the
+only legitimate channels for PE exposure changes. Liquid sleeves
+absorb the entire rebalancing burden over the residual liquid NAV.
+PE drift away from policy is **expected**, **tolerated**, and
+surfaced as diagnostics in the report.
+
+### Load-bearing rules
+
+1. **PE flows remain distinct from rebalance.**
+   ``pe_call`` / ``pe_distribution`` / ``pe_nav_mark`` rows are
+   unchanged. ``rebalance`` rows for illiquid buckets are zero by
+   construction.
+2. **Rebalance only liquid buckets.** Illiquid buckets are locked at
+   their post-pe-flow current dollars. Liquid sleeves rebalance
+   within the residual ``V - sum(C_illiquid)``.
+3. **Two target concepts.**
+   ``policy_target = allocator.target_at(...)`` is the strategic
+   intent.
+   ``execution_target = apply_liquidity_overlay(policy_target,
+   current_dollars, liquidity)`` is what the implementation engine
+   actually consumes. The allocator stays unaware of liquidity in
+   Phase 8.
+4. **No optimizer-objective change.** Both ``StubAllocator`` and
+   ``CvxportfolioAllocator`` continue to produce policy targets
+   without illiquidity awareness. The cost-aware allocator's
+   per-quarter cost calculation may be slightly less coherent under
+   the overlay (some cost it accounted for in PE moves never
+   materialises), but the Phase 4b objective and anchor tests are
+   preserved verbatim.
+
+### Liquidity source of truth — promoted from diagnostic to execution input
+
+Phase 5 introduced ``cma.liquidity`` as optional diagnostic
+metadata. Phase 8 promotes it:
+
+* When the overlay is on (default), ``cma.liquidity`` **must** cover
+  every allocation bucket.
+* All ``pe_*`` buckets **must** be tagged ``illiquid``.
+* The liquid set (``liquid`` ∪ ``semi_liquid``) **must** contain at
+  least one bucket.
+* The aggregate policy weight across the liquid set **must** be
+  ``> 0``. Otherwise the renormalisation ``w_j / Σ w_L`` is ``0/0``.
+
+All four checks live in the cross-config validator (mirroring the
+Phase 5 / 6 / 7 patterns). Loud failure at config load.
+
+### Execution target formula
+
+Let ``I`` = illiquid buckets, ``L`` = liquid buckets,
+``V = total current NAV``, ``C_b`` = current dollars in bucket
+``b``, ``w_b`` = policy weight for bucket ``b``.
+
+```
+execution_dollars[i] = C_i              for i ∈ I    (locked)
+liquid_nav           = V - Σ_{i ∈ I} C_i
+liquid_policy_w[j]   = w_j / Σ_{k ∈ L} w_k          (renormalise)
+execution_dollars[j] = liquid_nav · liquid_policy_w[j]   for j ∈ L
+execution_weight[b]  = execution_dollars[b] / V
+```
+
+Result: PE rebalance trade = 0; liquid trades sum to zero;
+``Σ execution_weight = 1``; portfolio drifts away from strategic
+PE target as PE NAV evolves through calls / distributions / marks.
+
+### Edge cases — fail loudly
+
+* **`liquid_nav < 0`** (illiquid current dollars exceed total NAV —
+  pathological leveraged-via-PE state): **fail loudly** with
+  ``liquid_nav`` value and the per-bucket breakdown in the error.
+  No silent repair.
+* **`liquid_nav == 0`** is allowed **only** when every liquid
+  bucket's current dollars are already zero (genuine no-op). Any
+  other case where ``liquid_nav == 0`` and at least one liquid
+  bucket has nonzero current dollars **fails loudly** — that would
+  imply selling those liquid positions to zero, which is almost
+  certainly wrong.
+* **Empty liquid set** or **zero aggregate liquid policy weight**:
+  fails at cross-config validation (above), not at apply time.
+
+### Module location
+
+```
+src/aa_model/allocation/liquidity_overlay.py
+```
+
+Generic over CMA liquidity tags — not PE-specific. PE happens to be
+the only illiquid bucket today; a future credit / real-estate / LP
+bucket marked ``illiquid`` would be locked the same way.
+
+### Application point in the orchestrator
+
+Inserted between Phase 4b's step 6.5 (cost-aware target) and the
+existing step 7 (rebalance):
+
+```python
+# 6.5  cost-aware target (Phase 4b)
+target_weights = alloc.target_at(ledger, alloc_params, q,
+                                 current_dollars, cost_model)
+
+# 6.6  illiquidity overlay (Phase 8)  —  default-on
+if cfg.base.rebalance.illiquid_overlay:
+    target_weights, liquidity_diag = apply_liquidity_overlay(
+        policy_weights=target_weights,
+        current_dollars=current_dollars,
+        liquidity=cma.liquidity,
+    )
+
+# 7.  rebalance to (possibly overlay-adjusted) target weights
+target_nav = (target_weights * total_nav).reindex(...).fillna(0.0)
+result = impl.rebalance(current_nav, target_nav, cost_model)
+```
+
+The implementation adapter is **unchanged**.
+
+### Internal-only opt-out — `rebalance.illiquid_overlay`
+
+A new ``base.rebalance.illiquid_overlay: bool = True`` field on
+``RebalanceConfig``. **Production default is ``True``.** The
+``False`` case exists **only** to preserve the pre-L8 PE-tradable
+behavior under a regression-anchor test fixture so future bug
+investigations can compare. It is **not advertised in user docs**
+and **not a recommended user-facing mode**. The field is in the
+config schema (visible in ``config_hash``) so a regression run is
+loud about its non-default state.
+
+### Transaction-cost treatment
+
+Costs apply only to **executed liquid trades**. Because illiquid
+rebalance trades are zero, illiquid buckets contribute no
+``transaction_cost``. PE calls and distributions remain separate
+flows and are not transaction-cost-generating; the Phase 3b
+accounting rule (``transaction_cost`` is an external cash outflow
+on the household) is preserved.
+
+### Per-quarter diagnostics surfaced in `report.md`
+
+Per illiquid bucket:
+
+* policy weight
+* current weight
+* drift = current − policy
+
+Aggregates:
+
+* ``max_abs_illiquid_drift_pct``
+* ``sum_abs_illiquid_drift_pct``
+* ``clipped_to_zero_liquid_count`` — count of (quarter, liquid
+  bucket) pairs where the post-overlay execution dollar amount
+  rounds to ≤ \$1 (analog to STAIRS's ``clipped_quarters`` and the
+  cost-aware allocator's advisory diagnostics)
+
+The existing report sections are unchanged; Phase 8 adds a new
+``## Illiquidity overlay`` block when the overlay is active.
+
+### Invariants
+
+Every existing §5.1 ledger invariant remains unchanged:
+
+* per-row consistency, per-bucket chain consistency, per-quarter
+  per-bucket flow tie-out, total NAV conservation, external cash-
+  flow tie-out, rebalance per-quarter zero-sum,
+  pe_call / pe_distribution per-quarter zero-sum, spend uniqueness.
+
+**New invariant introduced by Phase 8:**
+
+> For any bucket tagged ``illiquid`` in ``cma.liquidity``:
+> **no `rebalance` rows exist** in the validated ledger.
+
+Equivalent test:
+
+```python
+df[(df.flow_type == "rebalance") & df.bucket.isin(illiquid)].empty
+```
+
+This becomes the L8 load-bearing structural invariant.
+
+### Tests planned
+
+Unit (overlay function):
+
+1. PE / illiquid rebalance trades are exactly zero across multiple
+   pre-rebalance dollar mixes.
+2. Liquid weights renormalise to the hand-worked example (cash
+   4.33%, bond 17.33%, equity 43.33%, PE 35.00% from the design
+   example).
+3. ``Σ execution_weight == 1`` to ``1e-12`` across a parameter
+   sweep.
+4. Multi-sleeve illiquid fixture (e.g., ``pe_buyout`` + ``pe_venture``)
+   — both buckets locked; liquid sleeves renormalise across the
+   remaining liquid policy weight.
+5. ``liquid_nav < 0`` raises ``ValueError`` with a precise per-bucket
+   breakdown.
+6. ``liquid_nav == 0`` allowed only when every liquid bucket's
+   current dollars are zero; raises otherwise.
+
+Schema / cross-config:
+
+7. CMA missing ``liquidity`` field while overlay is on fails at
+   cross-config validation.
+8. CMA marks all PE sleeves ``liquid`` while overlay is on fails.
+9. Empty liquid set or zero aggregate liquid policy weight fails.
+
+End-to-end orchestrator:
+
+10. Default-on shipped fixture: full run, ledger validates, **no
+    `rebalance` rows on `pe_buyout`**, illiquidity-overlay report
+    section present with per-bucket drift.
+11. Internal opt-out (``rebalance.illiquid_overlay: false``):
+    pre-L8 PE-tradable behavior reproduced; this is the
+    regression-anchor fixture only.
+12. PE call / distribution mechanics unaffected — paired
+    cash offsets per quarter still zero-sum (existing test continues
+    to pass).
+13. STAIRS engine + overlay default-on: full run validates; PE
+    drift reflects STAIRS-coupled growth + no rebalance.
+
+### What Phase 8 is **not**
+
+Listed explicitly so a future contributor reads them as guardrails:
+
+* **Not a secondary-market PE sale path.** No way to reduce PE
+  except via distributions.
+* **Not a PE purchase path.** No way to increase PE except via
+  committed-fund calls.
+* **Not a commitment optimiser** or pacing-recommitment model.
+* **Not a STAIRS change.** STAIRS continues to drive NAV marks; L8
+  is upstream of that on the rebalance side.
+* **Not a transaction-cost model for PE secondaries** — secondaries
+  aren't modelled at all.
+* **Not a liquidity-stress liquidation path.** A drawdown that
+  drives ``liquid_nav < 0`` fails loudly; it does not auto-liquidate
+  PE.
+* **Not an allocator-objective reformulation.** The cost-aware
+  allocator stays unchanged; teaching it illiquidity is a future
+  phase.
+
+### L8 status under Phase 8
+
+Will flip to ``[RESOLVED 2026-xx-xx, Phase 8]`` on implementation.
+Resolution wording:
+
+* PE is no longer tradable through rebalance under default config.
+* PE exposure changes only through commitments → calls →
+  distributions → NAV marks (the real-world mechanism).
+* PE drift away from strategic policy is expected, tolerated, and
+  surfaced in the report.
+* The pre-L8 PE-tradable behavior remains reachable only through an
+  internal-only ``rebalance.illiquid_overlay: false`` flag intended
+  for regression comparisons.
+
+### Locked design choices
+
+* Default-on as **correctness fix** — Phase 8 may intentionally
+  change default ledger outputs. The implementation Change Log
+  must explicitly account for any numeric-anchor changes (which
+  tests get re-anchored, why, and the new pass count).
+* ``liquid_nav < 0`` fails loudly; ``liquid_nav == 0`` allowed only
+  when current liquid positions are all zero.
+* Empty liquid set fails at cross-config validation; aggregate
+  liquid policy weight must be ``> 0``.
+* Module location: ``allocation/liquidity_overlay.py`` — generic
+  over liquidity tags, not PE-specific.
+* Diagnostics: per-illiquid-bucket policy weight / current weight /
+  drift; aggregate ``max_abs_illiquid_drift_pct`` and
+  ``sum_abs_illiquid_drift_pct``; ``clipped_to_zero_liquid_count``.
+* Internal-only opt-out: ``base.rebalance.illiquid_overlay: bool =
+  True``. Default-on production behavior; ``False`` reserved for
+  regression-anchor tests.
+* Pre-L8 calibration / probe artifacts that aren't regenerated
+  should carry a "pre-L8" tag in their header so future readers
+  don't compare values across the L8 cutover unawares.
+
+---
+
 ## Change Log
 
 Entries are appended in chronological order. Each entry: date, commit hash,
@@ -3884,3 +4176,72 @@ what changed, why, impact on outputs, backward-compatibility flag.
   for any out-of-tree config that explicitly sets
   ``pe.engine="stairs"`` without supplying ``stairs_defaults`` —
   pydantic + cross-config validation will fail loudly.
+
+### 2026-05-02 — Phase 8 design locked (PE illiquidity in rebalancing, pre-implementation)
+
+* **What.** Lock the §Phase 8 design ahead of implementation.
+  Resolves L8 (rebalancer treats PE as liquid). An illiquidity
+  overlay is inserted between the cost-aware target (Phase 4b
+  step 6.5) and the implementation rebalance (step 7). Eight
+  locked refinements:
+  1. **Default-on as correctness fix.** Phase 8 may intentionally
+     change default ledger outputs; the implementation Change Log
+     must explicitly account for which tests get re-anchored.
+  2. ``liquid_nav < 0`` fails loudly with a per-bucket breakdown.
+     ``liquid_nav == 0`` allowed only when every liquid bucket
+     already has zero current dollars (genuine no-op); otherwise
+     fails loudly.
+  3. **Empty liquid set fails at config validation**, not apply
+     time. Aggregate policy weight across the liquid set must be
+     ``> 0`` — otherwise the renormalisation
+     ``w_j / Σ w_L`` is ``0/0``.
+  4. **Module location: ``allocation/liquidity_overlay.py``**
+     (generic over liquidity tags; not PE-specific).
+  5. **Diagnostics**: per-illiquid-bucket policy weight / current
+     weight / drift; aggregate ``max_abs_illiquid_drift_pct`` and
+     ``sum_abs_illiquid_drift_pct``;
+     ``clipped_to_zero_liquid_count`` (analog to STAIRS's
+     ``clipped_quarters``).
+  6. **Internal-only opt-out: ``base.rebalance.illiquid_overlay:
+     bool = True``.** Default-on production behavior; ``False``
+     reserved for regression-anchor tests capturing pre-L8
+     PE-tradable behavior. Not advertised in user docs.
+  7. **Comprehensive test list**: PE/illiquid trades zero,
+     liquid renormalisation hand-worked, multi-sleeve illiquid
+     fixture, ``liquid_nav<0`` failure, ``liquid_nav==0``
+     behavior, empty-liquid-set validation, internal opt-out
+     reproduces pre-L8 ledger, all §5.1 invariants preserved.
+  8. **Pre-L8 calibration / probe artifacts** that aren't
+     regenerated carry a "pre-L8" header tag so future readers
+     don't compare values across the L8 cutover unawares.
+* **What this is not.** No secondary-market PE sales, no PE
+  purchase path outside committed-fund calls, no commitment
+  optimiser, no STAIRS changes, no transaction-cost model for PE
+  secondaries, no liquidity-stress auto-liquidation, no
+  allocator-objective reformulation. Phase 8 only changes the
+  rebalance execution target — every other surface is untouched.
+* **New invariant under Phase 8.** For any bucket tagged
+  ``illiquid`` in ``cma.liquidity``, no ``rebalance`` rows may
+  exist in the validated ledger. This becomes the L8 load-bearing
+  structural invariant.
+* **L8 status.** Will flip to
+  ``[RESOLVED 2026-05-02, Phase 8]`` on implementation. PE
+  exposure changes only through commitments → calls →
+  distributions → NAV marks (the real-world mechanism). PE drift
+  away from strategic policy is expected, tolerated, and surfaced
+  in the report.
+* **Why default-on, not opt-in.** This is a correctness fix, not
+  an experimental feature. The pre-L8 default behavior produces
+  unrealistic PE rebalancing every quarter; keeping it as the
+  default would mean the production model continues to lie about
+  PE liquidity by default. Future PE-realism layers (manager
+  enrichment, recommitment optimiser, commitment-stress, eventual
+  Monte Carlo STAIRS) build on the correct illiquidity foundation.
+  The internal-only opt-out preserves a regression anchor without
+  giving users an "easy" way to revert to the wrong behavior.
+* **Impact on outputs.** Design only — no code changes in this
+  commit. When Phase 8 ships, default-config ledger output
+  **changes** (rebalance rows for ``pe_*`` go to zero; liquid
+  rebalance rows shift to renormalised execution targets). Every
+  §5.1 invariant continues to hold; no ledger schema change.
+* **Backward-compatible.** Yes (design only).
