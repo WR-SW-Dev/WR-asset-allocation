@@ -29,6 +29,15 @@ implementation's actual behavior.
 
 ## Use-case context — standing modeling principle (Gen3–Gen5 SFO)
 
+> **Authoritative scope:** `PROJECT_SCOPE.md` at the repo root is the
+> authoritative scope statement for this project (codename:
+> *Wake Robin Liquidity Architecture*). When this section and
+> `PROJECT_SCOPE.md` disagree on what the project is *for* or what it
+> must eventually cover, `PROJECT_SCOPE.md` wins; this file remains
+> authoritative for *how the model is built and behaves*. Reference
+> architecture diagram tracked at `docs/wake_robin_liquidity_architecture.png`
+> (`.svg` for the vector source).
+>
 > This model is for a **Gen3–Gen5 single-family office** balance sheet,
 > typically holding **large illiquid private real estate, operating-
 > company interests, development assets, and land** alongside public
@@ -611,32 +620,56 @@ doesn't have to skim eighteen entries to know what's open.
 
 #### Roadmap implications (open entries by priority)
 
-After Phase 11 closed L16, three entries are genuinely open and
-worth scoping next:
+> **Scope context.** The sequencing below is the
+> implementation-level view. The project-level roadmap — including
+> the unbuilt entity / cash-flow / RE+OpCo / liquidity-tier layers
+> that surround these limitation entries — lives in
+> `PROJECT_SCOPE.md` §6 and is authoritative when the two disagree.
+
+After Phase 11 closed L16, three limitation entries are genuinely
+open. Sequenced against the broader scope in `PROJECT_SCOPE.md`,
+the order is:
 
 1. **L19 — Spending base realism for illiquid SFO balance sheets.**
-   The next-priority modeling fix. Owl currently measures
-   withdrawal rate against **total NAV**. For a Gen3–Gen5 SFO
-   with large private real estate, opco equity, development
-   assets, and land, total NAV may materially overstate
-   spendable capacity. **Phase 11 / L16 closure does NOT address
-   this** — Phase 11 is scale-invariance only. A future phase
-   should introduce a spendable-resource / liquidity-adjusted NAV
-   base for spending rules. Honors the standing "NAV is not
-   liquidity" principle (see top-of-doc §Use-case context).
-   Most directly client-relevant of the open backlog.
+   The next-priority modeling fix and the entry point into the
+   unbuilt SFO layers (`PROJECT_SCOPE.md` §3.1, §3.3, §3.5, §3.6).
+   Owl currently measures withdrawal rate against **total NAV**.
+   For a Gen3–Gen5 SFO with large private real estate, opco
+   equity, development assets, and land, total NAV may materially
+   overstate spendable capacity. **Phase 11 / L16 closure does NOT
+   address this** — Phase 11 is scale-invariance only. A future
+   phase should introduce a spendable-resource / liquidity-
+   adjusted NAV base for spending rules. Honors the standing
+   "NAV is not liquidity" principle (see top-of-doc §Use-case
+   context). Most directly client-relevant of the open backlog.
 
-2. **L2 — Returns are NAV-dependent, not regime-dependent.**
+2. **Cash-flow ingestion + entity schema (post-L19).** Validated
+   pydantic v2 schemas for the entity chart and the per-entity
+   cash-flow forecast; loaders for the external Cashflow Modeling
+   workbook (read-only; see `PROJECT_SCOPE.md` §5.1); reconciliation
+   tests against the workbook's family aggregate within a documented
+   tolerance. **Not** a `Limitations` entry in this file because the
+   gap is structural (whole layers not yet built), not a defect of an
+   existing layer.
+
+3. **Position ingestion + RE / OpCo pipeline (post cash-flow).**
+   Loader for the Investment Summary workbook (read-only; see
+   `PROJECT_SCOPE.md` §5.2), per-position metadata hydration,
+   then RE capital-need schedules, NOI for stabilized RE, OpCo
+   distribution policy. Unblocks an honest tier-by-tier liquidity
+   layer (`PROJECT_SCOPE.md` §3.6 full build).
+
+4. **L2 — Returns are NAV-dependent, not regime-dependent.**
    Scenario perturbations change *levels* but not *dynamics* —
    no autocorrelation, no volatility clustering, no drawdown
    contagion. Resolving requires a Monte Carlo path generator
-   plus a stochastic regime layer over CMA. Substantial work;
-   biggest realism upgrade remaining; explicitly deferred until
-   correlation / illiquidity / pacing layers (Phases 6–9) had
-   landed deterministic-first. **Now unblocked structurally;
-   when the project commits to Monte Carlo, L2 is the gate.**
+   plus a stochastic regime layer over CMA. **Structurally
+   unblocked post-Phase 11**, but explicitly deferred until the
+   deterministic SFO layers above are honest. Sequencing Monte
+   Carlo before those layers would dress up unrealistic
+   deterministic assumptions in stochastic clothing.
 
-3. **L5 — `source` as PE-leg pairing key is fragile.** Currently
+5. **L5 — `source` as PE-leg pairing key is fragile.** Currently
    adequate (one row per leg per fund per quarter; Phase 9's
    globally-unique `name` rule lifts the implicit invariant).
    Becomes binding when recommitment logic, secondary-purchase
@@ -5939,3 +5972,69 @@ future spending- and liquidity-related modeling work.
 * **Backward-compatible.** Yes. New fields default to ``None`` so
   existing Owl configs validate and run unchanged. No allocator,
   rebalancer, ledger, PE, or fee-economics code touched.
+
+### 2026-05-02 — docs(scope): scope-lock — `PROJECT_SCOPE.md` + Wake Robin reference architecture
+
+* **What.** Docs-only scope-lock commit. Three surfaces:
+  1. **New `PROJECT_SCOPE.md`** at the repo root. Authoritative scope
+     statement reframing the project from "asset allocation framework"
+     to a Gen3–Gen5 single-family-office (SFO) modeling stack covering
+     seven layers in dependency order: Entity, Account/Position,
+     Cash-flow, PE pacing, RE+OpCo, Liquidity, Allocation/Policy.
+     Codifies the four-line principle ("NAV is not liquidity / appraisal
+     value is not spending capacity / development+land value is not
+     distributable income / OpCo value is not automatically portfolio
+     liquidity"). Records two external read-only integration targets
+     and what is committed vs. what is not. Lists out-of-scope items
+     explicitly. Defines the authority + update protocol.
+  2. **Reference architecture artifacts.** Tracked
+     ``docs/wake_robin_liquidity_architecture.png`` (canonical render)
+     and ``docs/wake_robin_liquidity_architecture.svg`` (vector
+     source). Diagram lays out Inputs → Engines → Outputs for the full
+     SFO stack.
+  3. **`MODEL_DOCUMENTATION.md` reframings.** §Use-case context now
+     opens with a pointer making `PROJECT_SCOPE.md` authoritative for
+     project scope; this file remains authoritative for *how the model
+     is built and behaves*. Roadmap implications section (under
+     §Limitations) reordered: L19 → cash-flow ingestion + entity schema
+     → position ingestion + RE/OpCo pipeline → L2 (Monte Carlo,
+     deferred until deterministic SFO layers are honest) → L5 (rides
+     a future phase). Cash-flow / entity / RE+OpCo are explicitly
+     called out as **not** ``Limitations`` entries because the gap is
+     structural (whole layers not yet built), not a defect of an
+     existing layer.
+* **External integration targets (read-only; not committed).**
+  * `Cashflow Modeling v7.xlsx` —
+    `C:\Users\DarrenSchulz\Brooks Capital Management\Accounting - Documents\Cashflow\Cashflow Modeling v7.xlsx`.
+    Canonical reference for the cash-flow + entity layers. Structural
+    domains only (sheet inventory, entity types, period structure)
+    are referenced in `PROJECT_SCOPE.md` §5.1; live values, person
+    names, and forecast tables are not.
+  * `Investment Summary for Categorization March 2026.xlsx` —
+    `C:\Users\DarrenSchulz\Brooks Capital Management\Investment - Documents\Investment Summary for Categorization March 2026.xlsx`.
+    Canonical position universe for the account/position layer.
+    Structural taxonomy (Asset Allocation Class set, five-tier
+    Liquidity Bucket, liquidity granularity, time horizon,
+    cash-flow-producing flag) referenced in `PROJECT_SCOPE.md` §5.2;
+    live balances, manager identities, and per-position dollar
+    columns are not.
+* **Why.** Phases 1–11 closed under an "asset allocation framework"
+  framing. Under the actual Gen3–Gen5 SFO use case the project
+  must eventually cover entity, cash-flow, RE/OpCo, and liquidity-
+  tier layers that the current code does not. Locking the scope
+  now — before L19 and the unbuilt layers land — prevents the
+  documentation from drifting further behind the real intent and
+  gives future phases an authoritative reference for what is in
+  scope vs. what is not.
+* **Repo name.** Directory remains ``asset-allocation/`` for
+  continuity. ``Wake Robin Liquidity Architecture`` is a
+  documentation codename only; no code, package, or import path
+  changes.
+* **Tests.** Docs-only commit; 225 tests still pass. Zero new tests;
+  zero re-anchored.
+* **Backward-compatible.** Yes. Documentation and tracked diagram
+  artifacts only; no code, schema, config, or output changes.
+* **Authority.** `PROJECT_SCOPE.md` becomes the authoritative scope
+  reference. Future scope changes follow the protocol in
+  `PROJECT_SCOPE.md` §8 — scope-lock commits and implementation
+  commits stay disjoint.

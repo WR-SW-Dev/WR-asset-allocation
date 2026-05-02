@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1360" height="1120" viewBox="0 0 680 560" role="img" font-family="Cambria, 'Times New Roman', serif">
+<title>Wake Robin liquidity model data architecture</title>
+<desc>Three-column data architecture showing seven input sources feeding five processing engines, which produce five decision-oriented outputs.</desc>
+<style>
+.bg { fill: #FAF7F2; }
+.th { font-size: 11px; font-weight: 700; fill: #1F2933; }
+.ts { font-size: 9px; fill: #5A5F66; font-style: italic; }
+.colhead { font-size: 13px; font-weight: 700; fill: #1F2933; }
+.colsub { font-size: 9px; fill: #8A8A84; font-style: italic; }
+.c-teal rect { fill: #E8EEEC; stroke: #4A5D4F; }
+.c-teal .th { fill: #2F3E35; }
+.c-teal .ts { fill: #4A5D4F; }
+.c-purple rect { fill: #EDE4F0; stroke: #5A4A6E; }
+.c-purple .th { fill: #3B2F4B; }
+.c-purple .ts { fill: #5A4A6E; }
+.c-coral rect { fill: #F2E2DB; stroke: #A67B5B; }
+.c-coral .th { fill: #5E4330; }
+.c-coral .ts { fill: #8A5F3F; }
+.arr { stroke: #1F2933; fill: none; }
+</style>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="#1F2933" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+
+<rect class="bg" x="0" y="0" width="680" height="560"/>
+
+<text class="colhead" x="120" y="28" text-anchor="middle">Inputs</text>
+<text class="colsub" x="120" y="46" text-anchor="middle">Sources of truth</text>
+
+<text class="colhead" x="330" y="28" text-anchor="middle">Processing engines</text>
+<text class="colsub" x="330" y="46" text-anchor="middle">Model components</text>
+
+<text class="colhead" x="550" y="28" text-anchor="middle">Outputs</text>
+<text class="colsub" x="550" y="46" text-anchor="middle">Decision artifacts</text>
+
+<!-- Inputs column -->
+<g class="c-teal">
+<rect x="40" y="70" width="160" height="52" rx="8" stroke-width="0.5"/>
+<text class="th" x="120" y="90" text-anchor="middle" dominant-baseline="central">Positions</text>
+<text class="ts" x="120" y="108" text-anchor="middle" dominant-baseline="central">Archway, Canoe</text>
+</g>
+
+<g class="c-teal">
+<rect x="40" y="132" width="160" height="52" rx="8" stroke-width="0.5"/>
+<text class="th" x="120" y="152" text-anchor="middle" dominant-baseline="central">Obligations</text>
+<text class="ts" x="120" y="170" text-anchor="middle" dominant-baseline="central">Discretionary, contractual</text>
+</g>
+
+<g class="c-teal">
+<rect x="40" y="194" width="160" height="52" rx="8" stroke-width="0.5"/>
+<text class="th" x="120" y="214" text-anchor="middle" dominant-baseline="central">Liv pipeline</text>
+<text class="ts" x="120" y="232" text-anchor="middle" dominant-baseline="central">Liv operations</text>
+</g>
+
+<g class="c-teal">
+<rect x="40" y="256" width="160" height="52" rx="8" stroke-width="0.5"/>
+<text class="th" x="120" y="276" text-anchor="middle" dominant-baseline="central">PE commitments</text>
+<text class="ts" x="120" y="294" text-anchor="middle" dominant-baseline="central">Canoe, GP comms</text>
+</g>
+
+<g class="c-teal">
+<rect x="40" y="318" width="160" height="52" rx="8" stroke-width="0.5"/>
+<text class="th" x="120" y="338" text-anchor="middle" dominant-baseline="central">Inflows</text>
+<text class="ts" x="120" y="356" text-anchor="middle" dominant-baseline="central">Archway, Liv acct.</text>
+</g>
+
+<g class="c-teal">
+<rect x="40" y="380" width="160" height="52" rx="8" stroke-width="0.5"/>
+<text class="th" x="120" y="400" text-anchor="middle" dominant-baseline="central">Policy rules</text>
+<text class="ts" x="120" y="418" text-anchor="middle" dominant-baseline="central">IPS documents</text>
+</g>
+
+<g class="c-teal">
+<rect x="40" y="442" width="160" height="52" rx="8" stroke-width="0.5"/>
+<text class="th" x="120" y="462" text-anchor="middle" dominant-baseline="central">Stress inputs</text>
+<text class="ts" x="120" y="480" text-anchor="middle" dominant-baseline="central">Staff-defined</text>
+</g>
+
+<!-- Engines column -->
+<g class="c-purple">
+<rect x="240" y="88" width="180" height="60" rx="8" stroke-width="0.5"/>
+<text class="th" x="330" y="110" text-anchor="middle" dominant-baseline="central">Liquidity tiering</text>
+<text class="ts" x="330" y="130" text-anchor="middle" dominant-baseline="central">5-tier classification</text>
+</g>
+
+<g class="c-purple">
+<rect x="240" y="170" width="180" height="60" rx="8" stroke-width="0.5"/>
+<text class="th" x="330" y="192" text-anchor="middle" dominant-baseline="central">Cash flow engine</text>
+<text class="ts" x="330" y="212" text-anchor="middle" dominant-baseline="central">Quarterly projection</text>
+</g>
+
+<g class="c-purple">
+<rect x="240" y="252" width="180" height="60" rx="8" stroke-width="0.5"/>
+<text class="th" x="330" y="274" text-anchor="middle" dominant-baseline="central">PE pacing (TA)</text>
+<text class="ts" x="330" y="294" text-anchor="middle" dominant-baseline="central">Call and distribution</text>
+</g>
+
+<g class="c-purple">
+<rect x="240" y="334" width="180" height="60" rx="8" stroke-width="0.5"/>
+<text class="th" x="330" y="356" text-anchor="middle" dominant-baseline="central">Liv call model</text>
+<text class="ts" x="330" y="376" text-anchor="middle" dominant-baseline="central">OpCo forecasting</text>
+</g>
+
+<g class="c-purple">
+<rect x="240" y="416" width="180" height="60" rx="8" stroke-width="0.5"/>
+<text class="th" x="330" y="438" text-anchor="middle" dominant-baseline="central">Scenario overlay</text>
+<text class="ts" x="330" y="458" text-anchor="middle" dominant-baseline="central">Stress and sensitivity</text>
+</g>
+
+<!-- Outputs column -->
+<g class="c-coral">
+<rect x="460" y="88" width="180" height="60" rx="8" stroke-width="0.5"/>
+<text class="th" x="550" y="110" text-anchor="middle" dominant-baseline="central">Entity forecasts</text>
+<text class="ts" x="550" y="130" text-anchor="middle" dominant-baseline="central">Frequency, horizon</text>
+</g>
+
+<g class="c-coral">
+<rect x="460" y="170" width="180" height="60" rx="8" stroke-width="0.5"/>
+<text class="th" x="550" y="192" text-anchor="middle" dominant-baseline="central">Coverage ratios</text>
+<text class="ts" x="550" y="212" text-anchor="middle" dominant-baseline="central">Months of runway</text>
+</g>
+
+<g class="c-coral">
+<rect x="460" y="252" width="180" height="60" rx="8" stroke-width="0.5"/>
+<text class="th" x="550" y="274" text-anchor="middle" dominant-baseline="central">Breach alerts</text>
+<text class="ts" x="550" y="294" text-anchor="middle" dominant-baseline="central">Cash floor warnings</text>
+</g>
+
+<g class="c-coral">
+<rect x="460" y="334" width="180" height="60" rx="8" stroke-width="0.5"/>
+<text class="th" x="550" y="356" text-anchor="middle" dominant-baseline="central">Family aggregate</text>
+<text class="ts" x="550" y="376" text-anchor="middle" dominant-baseline="central">Cross-entity view</text>
+</g>
+
+<g class="c-coral">
+<rect x="460" y="416" width="180" height="60" rx="8" stroke-width="0.5"/>
+<text class="th" x="550" y="438" text-anchor="middle" dominant-baseline="central">Stress outputs</text>
+<text class="ts" x="550" y="458" text-anchor="middle" dominant-baseline="central">Scenario results</text>
+</g>
+
+<!-- Flow arrows -->
+<line x1="205" y1="282" x2="235" y2="282" class="arr" marker-end="url(#arrow)" stroke-width="2"/>
+<line x1="425" y1="282" x2="455" y2="282" class="arr" marker-end="url(#arrow)" stroke-width="2"/>
+</svg>
