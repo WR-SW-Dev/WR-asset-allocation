@@ -1238,7 +1238,7 @@ nothing forward.
 | sub-phase | scope | gates |
 |---|---|---|
 | **4a — Per-quarter observation API** | new `quarterly_outflow_at` ABC method; `closed_through` ledger view; OwlRule reads realized prior NAV; FlatRealRule + SmoothingRule migrate to per-quarter wrappers; orchestrator switches to per-quarter spending. **No allocation / implementation API changes.** | regression: 103 existing tests pass under the new API; new tests pin Owl's correct behavior under `public_drawdown` (must cut, not raise) and `inflation_shock` (must cut). L15 and L18 marked resolved. |
-| **4b — Cost-aware implementation** | optimizer-level cost penalty in `cvxportfolio` adapter; allocator and implementation get per-quarter ABCs (`target_at`, `rebalance_at`); transaction costs remain external (no flow-type changes). Still no fixed-point. | new numerical anchor for cost-aware partial-trade vector; L13 marked resolved. |
+| **4b — Cost-aware allocation** | new `target_at` per-quarter ABC method on `AllocationAdapter`; new opt-in `cvxportfolio` allocator engine that solves a single convex problem per quarter (dollar-quadratic policy deviation + linear trade cost); orchestrator passes `current_dollars` explicitly. **Implementation API unchanged** — `rebalance` stays a pure executor, no `rebalance_at`. Spending byte-identical to 4a. Still no fixed-point. | new closed-form 2-bucket anchor for cost-aware partial-trade vector; zero-cost parity, monotonicity-in-bps, path-blindness, and spending-untouched anchors. L13 marked resolved. |
 | **4c — Optional fixed-point research** | within-quarter fixed-point solving for joint allocator + spending decisions. **Not production default.** Behind a config flag if it lands at all. | research only; not gated for ship. |
 
 4a is the only sub-phase that addresses an empirically demonstrated
@@ -1258,6 +1258,284 @@ Listed explicitly so a future contributor reads them as guardrails:
 * Not a cost-aware optimizer (deferred to 4b).
 * Not a fix for L17 (cross-engine metric comparability is a
   reporting / interpretation problem, not an architecture problem).
+
+### Phase 4b design (cost-aware allocation, pre-implementation)
+
+> **One-line goal.** Cost enters the **allocation** decision so the
+> allocator can produce a partial-rebalance target when the cost of
+> trading toward policy exceeds the marginal benefit. **Spending logic
+> is byte-identical to 4a.** No fixed-point. No within-quarter
+> iteration. Optimizer never reads future state.
+
+#### Where cost lives — load-bearing decision
+
+Cost-awareness lives in the **allocator** (`target_at`), **not** the
+implementation. The implementation API does not change in 4b —
+`ImplementationAdapter.rebalance(current, target, costs)` keeps the
+Phase 3b signature and remains a pure executor. The cost-aware
+trade-off is fundamentally an allocation choice (deviate from policy to
+save cost); the trade is a downstream consequence. Reports that read
+"the allocator's target" then see the actual target. Putting cost in
+the rebalancer would split the economics from where readers expect it
+and break the implementation's zero-cost-parity anchor.
+
+The 4b deliverable adds **only** `target_at` to `AllocationAdapter`. No
+`rebalance_at` is added. (The earlier Phase 4 split-table entry that
+listed `rebalance_at` has been corrected.)
+
+#### Optimization (single convex problem, one solver call per quarter)
+
+The cost-aware allocator solves, for each quarter `q`:
+
+```
+trade_dollars = w · V_total - current_dollars
+
+minimize  λ · ‖ w · V_total - w_policy · V_total ‖²
+        + cost_per_dollar · ‖ trade_dollars ‖₁
+subject to
+        Σ w = 1
+        0 ≤ w ≤ 1
+        box bounds (per-bucket min/max from constraints)
+```
+
+with:
+
+* `w_policy` — static policy weights (today's `weights()` output, the
+  destination the allocator would pick absent costs).
+* `current_dollars` — pre-rebalance NAV per bucket at quarter `q`,
+  passed explicitly by the orchestrator (see *State channel* below).
+* `V_total = current_dollars.sum()` — pre-rebalance total NAV.
+* `cost_per_dollar = bps_per_trade / 1e4` — same coefficient as
+  cvxportfolio's `StocksTransactionCost(a)`.
+* `λ` — policy-deviation weight, surfaced as
+  `allocation.policy_loss_lambda` config field, default `1.0`. λ is
+  calibrated relative to the V_total scale; its absolute value is not
+  directly interpretable across portfolios of different size without
+  normalization. Re-tune when transplanting the engine to a portfolio
+  whose initial NAV differs by more than ~1 order of magnitude.
+
+**Why dollar-quadratic policy deviation, not weight-quadratic.** Both
+terms are now in dollars (policy in dollars², cost in dollars). λ has
+interpretable scale and behavior is stable across NAV sizes — a
+weight-based formulation would mix a unitless penalty with a dollar
+penalty, hiding implicit units inside λ.
+
+**Why the cost term is named `trade_dollars`.** Transaction cost is
+proportional to **trade size**, not to position deviation from policy.
+The `trade_dollars = w · V_total - current_dollars` definition makes
+the per-quarter trade vector explicit. Multi-period reasoning (Phase 5+)
+will need this distinction.
+
+This is **one solver call per quarter**. No back-edge to spending or
+to the ledger; no iteration; no future quarters. Strict single forward
+pass.
+
+#### Allocator API change
+
+```python
+class AllocationAdapter(ABC):
+    # Existing — preserved as the cost-blind policy reference.
+    @abstractmethod
+    def weights(self) -> pd.Series: ...
+
+    # New in 4b. Default impl returns weights() (cost-blind passthrough)
+    # so non-cost-aware adapters work unchanged.
+    def target_at(
+        self,
+        ledger: QuarterlyLedger,        # closed through q-1; per 4a contract
+        params: AllocationParams,
+        quarter: pd.Period,
+        current_dollars: pd.Series,     # bucket → pre-rebalance dollars at q
+        cost_model: CostModel,
+    ) -> pd.Series:                      # bucket → target weights, sums to 1.0
+        return self.weights()
+```
+
+`AllocationParams` is a new dataclass mirroring `SpendingParams`:
+`config: PublicAllocationConfig`, `start_quarter: pd.Period`,
+`num_quarters: int`.
+
+Per-engine semantics:
+
+* `StubAllocator.target_at` — returns `weights()` (config-verbatim).
+  Cost-blind. Behavior identical to today.
+* `RiskfolioAdapter.target_at` — returns `weights()` (min-variance
+  solution from `fit`). Cost-blind. Behavior identical to today.
+* **`CvxportfolioAllocator` (new)** — solves the cost-aware problem
+  above. **The only adapter that introduces cost-aware behavior.**
+  Wired through `make_allocator(engine="cvxportfolio")`. Cost-aware
+  allocation is **opt-in**; the default engine remains `stub`.
+
+q0: at `quarter == params.start_quarter`, `current_dollars` is the
+initial NAV vector. Cost-aware adapters return `weights()` at q0 (no
+prior trade context to reason about). This mirrors the spending rule's
+q0 contract.
+
+#### State channel — how prior + current state reach the allocator
+
+Two channels, both already present or trivial extensions of 4a:
+
+1. **Retrospective state** (quarters ≤ `q-1`): `ledger.closed_through(q-1)`
+   and `ledger.end_nav_through(q-1)` — same 4a contract. Available to
+   the allocator if a future cost-aware variant wants it; **the
+   cost-aware optimizer specified above does not read it.**
+2. **Current-quarter pre-rebalance state**: orchestrator passes
+   `current_dollars` as an explicit parameter, computed from the
+   existing per-quarter `running_nav` dict after canonical-order
+   steps 0–6 (inflow / return / pe_* / spend) and before steps 7–8
+   (rebalance / transaction_cost).
+
+**Why pass `current_dollars` explicitly rather than derive it from the
+ledger.** Under 4a's strict closure rule, `closed_through(q-1)` does
+*not* include current-quarter pre-rebalance state. The optimizer needs
+that state. Passing it as a named function argument is the explicit,
+auditable channel — keeps the rule "ledger closed-through-q-1 is the
+only retrospective state" intact, while making the current-quarter
+pre-rebalance input visible at the call site.
+
+> **Optimizer input rule (load-bearing).** The cost-aware optimizer
+> reads ONLY:
+>   * `current_dollars` (parameter)
+>   * `w_policy` (the adapter's `weights()` output)
+>   * `cost_model` (parameter)
+>   * `λ` (config)
+>
+> It does **not** read `ledger`, does not read past quarters, does not
+> read future quarters. The path-blindness anchor test (below) pins
+> this: two runs that arrive at the same `current_dollars` from
+> different histories produce the same `target_at` output.
+
+#### Determinism
+
+Risks: solver nondeterminism (cvxpy / clarabel / scs / osqp can produce
+slightly different bytes across versions or platforms), and
+floating-point reduction order in cost-penalty assembly.
+
+Mitigations:
+
+* **Solver outputs are canonicalized before ledger emission.** Round
+  target weights to 12 decimal places; renormalize sum-to-1 by
+  deterministic correction on the largest-weight bucket. The same
+  rounding happens inside the adapter; the ledger sees only the
+  rounded values.
+* **Pinned solver versions** in the optional-dependencies group:
+  `cvxportfolio==1.5.1`, `cvxpy==1.8.2`, plus pinned `clarabel` /
+  `scs` / `osqp`.
+* **Fixed solver tolerance** (`solver_tol = 1e-9`); not exposed as a
+  user knob without dedicated test coverage.
+* **Same-environment determinism is the contract**, matching the
+  existing repo guarantee. Cross-environment determinism is not
+  promised.
+
+This extends — not replaces — the Phase 4 determinism contract: rules
+may use solvers only if outputs are rounded / canonicalized before
+ledger emission.
+
+#### Numerical anchor tests (new file: `tests/test_cost_aware_allocator.py`)
+
+L13's "at zero cost, cvx == stub bit-for-bit" anchor breaks once an
+optimizer is involved (zero-cost cost-aware solution still equals
+"trade to policy" only when policy-loss dominates). New anchors:
+
+1. **Zero-cost parity.** With `cost_per_dollar == 0`, `target_at`
+   MUST equal the policy weights for any `current_dollars` (all three
+   adapters: stub, riskfolio, cvxportfolio).
+2. **Closed-form partial-trade.** Two-bucket case (cash, equity), known
+   `current`, policy 50/50, cost `c` bps, `λ` known. The optimum is
+   computable analytically (1D quadratic + L1 problem). Pin to
+   `1e-9` USD.
+3. **Symmetry.** Swapping bucket order (cash, equity) ↔ (equity, cash)
+   in inputs swaps the outputs. Guards against bucket-order-dependent
+   solver behavior.
+4. **Monotonicity in bps.** Increasing `bps_per_trade` produces trade
+   magnitudes element-wise ≤ those at lower bps, holding policy +
+   current fixed. Catches optimizer regressions.
+5. **Path-blindness.** Two runs that arrive at the same
+   `current_dollars` from different histories produce the same
+   `target_at` output. Pins the optimizer-input rule above.
+6. **Spending-untouched.** Owl + flat_real + smoothing produce
+   identical spending series under a 4b run vs a 4a run holding
+   `(current, target)` paths matched. Pins the directive that
+   spending is byte-identical to 4a.
+
+The existing `tests/test_riskfolio_adapter.py` stays green —
+riskfolio is unchanged. The existing
+`tests/test_cvxportfolio_adapter.py` (implementation, not allocation)
+stays green — implementation is unchanged.
+
+#### Invariants that must still hold (every 4a invariant, byte-for-byte)
+
+* All §5.1 ledger invariants — including the **4a spend-uniqueness**
+  hardening just landed (one row per `(run_id, quarter, source)` for
+  `spend`).
+* `transaction_cost` remains an external-on-cash outflow with no
+  offset elsewhere; included in NAV conservation set.
+* Canonical flow order unchanged.
+* Spending source filter unchanged; `quarterly_outflow_at` unchanged;
+  spending continues to see only `q-1` closed state.
+* "No orchestrator-side state across calls" preserved — `running_nav`
+  was already carried in 4a; 4b extends the per-quarter rebalance
+  step, not the state model.
+
+**New invariant introduced by 4b.** Cost-aware target is a function of
+`(w_policy, current_dollars, cost_model, λ)` only. No call to
+`ledger.closed_through(q)` (current quarter); no peek beyond `q-1`.
+Tested by anchor #5 (path-blindness).
+
+#### Orchestrator change (minimal — between current canonical steps 6 and 7)
+
+```python
+# 6.5 — Phase 4b: cost-aware target. Optimizer sees prior closed
+# ledger and pre-rebalance current dollars; never future state.
+current_dollars = pd.Series(running_nav, dtype=float)
+target_weights = alloc.target_at(
+    ledger, alloc_params, q, current_dollars, cost_model
+)
+target_nav = (target_weights * total_nav).reindex(running_nav.keys()).fillna(0.0)
+```
+
+Steps 7 (rebalance) and 8 (transaction_cost) are unchanged.
+
+The pre-existing `alloc.fit(...)` + `alloc.weights()` calls at run
+start become "set the policy reference"; the per-quarter target is
+now `target_at`'s output. For `engine in {stub, riskfolio}` the
+default-wrapper `target_at` returns `weights()` and the orchestrator
+behavior reduces to today's behavior bit-for-bit.
+
+#### Spending-side untouched (re-asserting forbidden list)
+
+Spending logic is byte-identical to 4a:
+
+* `quarterly_outflow_at` API is unchanged.
+* `OwlRule` continues to read `ledger.end_nav_through(q-1)` for the
+  realized prior-quarter total NAV at every year boundary.
+* `SmoothingRule` continues to read its own prior `spend` row from
+  the closed ledger.
+* `spend` flow position in canonical order is unchanged.
+* The spending decision uses the **closed-prior-quarter ledger** —
+  it does NOT see this quarter's cost-aware target or pre-rebalance
+  NAV. Exposing the cost-aware target to spending would re-introduce
+  the cycle 4a closed.
+
+#### What 4b is **not**
+
+Listed explicitly so a future contributor reads them as guardrails:
+
+* Not a fixed-point or iterative solve within a quarter.
+* Not within-quarter iteration. One `target_at` call per quarter.
+  One `rebalance` call per quarter. Same as 4a.
+* Not a multi-period optimization. Allocator never reads quarter `q`
+  or beyond. cvxportfolio's `MultiPeriodOptimization` is **not**
+  wired in.
+* Not a spending modification. `quarterly_outflow_at`, spending source
+  filter, and `spend` flow position are byte-identical to 4a.
+* Not a default-flip. `engine=stub` remains the default; cost-aware
+  is opt-in via `engine=cvxportfolio` until promotion evidence
+  lands.
+* Not a cost-flow change. `transaction_cost` stays an external-on-cash
+  outflow with the existing `impl:<engine>` source.
+* Not an `ImplementationAdapter` API change. `rebalance(current,
+  target, costs)` keeps the Phase 3b signature.
 
 ---
 
@@ -1975,3 +2253,92 @@ what changed, why, impact on outputs, backward-compatibility flag.
   an explicit mitigation path.
 * **Impact on outputs.** None (docs-only).
 * **Backward-compatible.** Yes.
+
+### 2026-05-01 — Phase 4a hardening: spend uniqueness + wrapper compat-only (`724b1a5`)
+
+* **What.** Two post-audit tightenings on Phase 4a, no behavior
+  change. (1) `QuarterlyLedger.validate()` now asserts a uniqueness
+  invariant: for each `(run_id, quarter, source)` where
+  `flow_type == "spend"`, exactly one row exists. Two new tests in
+  `tests/test_ledger.py` — pass case (multiple distinct sources in one
+  quarter still legal) and duplicate-detection. (2)
+  `MODEL_DOCUMENTATION.md` now states explicitly that
+  `quarterly_outflows()` is **compatibility-only** for path-dependent
+  rules — the wrapper iterates against a synthetic ledger that has no
+  realized return / pe_* / rebalance / transaction_cost flows, so it
+  is **not** a correctness path. The authoritative correctness path
+  is the orchestrator-driven `quarterly_outflow_at()` against the
+  live ledger closed through `q-1`.
+* **Why.** Path-dependent rules (`SmoothingRule`, `OwlRule`) recover
+  prior outflow by filtering spend rows on their own `SOURCE_ID`; a
+  duplicate row at the same `(run_id, quarter, source)` would silently
+  double-count and corrupt the recovery. The wrapper-vs-orchestrator
+  distinction matters most before Phase 4b, where cost-aware sizing
+  must not be validated against the wrapper's degenerate trajectory.
+  Both items lock the 4a interface before 4b touches allocation.
+* **Impact on outputs.** None — invariant holds trivially under the
+  current orchestrator (one spend row per quarter at
+  `source=rule.SOURCE_ID`); doc clarification only.
+* **Backward-compatible.** Yes. 108 tests pass.
+
+### 2026-05-01 — Phase 4b design (pre-implementation)
+
+* **What.** Lock the Phase 4b design ahead of implementation. Three
+  load-bearing decisions:
+  1. **Cost-awareness lives in the allocator (`target_at`), not in
+     the implementation.** `ImplementationAdapter.rebalance(current,
+     target, costs)` keeps its Phase 3b signature unchanged.
+     No `rebalance_at` is added. (The earlier Phase 4 split-table
+     entry that listed `rebalance_at` is corrected.)
+  2. **The cost-aware optimization is a single convex problem solved
+     once per quarter:** dollar-quadratic policy deviation
+     (`λ · ‖w·V_total − w_policy·V_total‖²`) plus linear trade cost
+     (`cost_per_dollar · ‖trade_dollars‖₁`), with
+     `trade_dollars = w·V_total − current_dollars`. Both terms are
+     in dollars — λ has interpretable scale and behavior is stable
+     across NAV sizes. The `trade_dollars` framing makes per-quarter
+     turnover explicit (cost is proportional to trade size, not to
+     position deviation from policy). λ is surfaced as
+     `allocation.policy_loss_lambda` config field, default `1.0`.
+  3. **The cost-aware optimizer reads ONLY `current_dollars`,
+     `w_policy`, `cost_model`, and `λ`.** It does not read the
+     ledger; it does not read past quarters; it does not read future
+     quarters. Pinned by the path-blindness anchor test.
+* **What 4b is not.** Not a fixed-point. Not within-quarter
+  iteration. Not a multi-period optimization (cvxportfolio's
+  `MultiPeriodOptimization` is **not** wired). Not a spending
+  modification — `quarterly_outflow_at`, the source filter, and the
+  `spend` flow position are byte-identical to 4a. Not a default-flip
+  — `engine=stub` remains default; cost-aware allocation is opt-in
+  via a new `engine="cvxportfolio"` allocator. Not a
+  `transaction_cost` flow change.
+* **State channel.** Orchestrator passes `current_dollars` (the
+  pre-rebalance NAV per bucket at quarter `q`, after canonical-order
+  steps 0–6) as an explicit function argument to `target_at`. This
+  is the explicit, auditable channel — it sidesteps the question
+  "is current-quarter pre-rebalance state visible through
+  `closed_through(q-1)`?" by not deriving it from the ledger at all.
+  The 4a closure rule ("ledger closed through `q-1` is the only
+  retrospective state") remains intact.
+* **New numerical anchors** (six tests in a new file
+  `tests/test_cost_aware_allocator.py`): zero-cost parity, closed-form
+  2-bucket partial trade, bucket-order symmetry, monotonicity in bps,
+  path-blindness, spending-untouched. Replaces the Phase 3b zero-bps
+  cvx-vs-stub anchor (which is no longer the right test once the
+  optimizer is involved).
+* **Why.** L13 has been carrying the explicit forward risk that the
+  rebalancer can't see cost in the trade decision. 4a's
+  per-quarter state-flow contract makes 4b possible without
+  reintroducing iteration. Locking the design with the dollar-quadratic
+  policy term + explicit `trade_dollars` cost term prevents two
+  failure modes a future contributor would otherwise re-introduce:
+  (i) mixing unitless and dollar penalties under an implicit-units
+  λ, and (ii) treating the L1 cost term as a position-deviation
+  penalty rather than a turnover penalty.
+* **Impact on outputs.** None — design only, no code changes in this
+  commit. When 4b ships, output impact is **zero for `engine=stub`
+  and `engine=riskfolio`** (default `target_at` returns `weights()`
+  unchanged); output divergence is gated entirely on opt-in to
+  `engine=cvxportfolio` allocator.
+* **Backward-compatible.** Yes. Allocator API extension is additive
+  (`weights()` preserved as the cost-blind policy reference).
