@@ -95,12 +95,15 @@ queue a separate phase to address it.
   rate-based Guyton-Klinger semantics, which is scale-invariant
   by design. **L16 closure does NOT address spending-base
   realism — Owl still measures rate against total NAV.**
-* **L19 (OPEN)** — spending base realism. Current Owl guardrails
-  compute withdrawal rate against **total NAV**, not spendable
-  resources. For Gen3–Gen5 SFOs, total NAV may materially
-  overstate spending capacity. **Phase 11 / L16 closure did not
-  address this.** Future work: spendable-resource /
-  liquidity-adjusted NAV base for spending rules.
+* **L19 (PARTIALLY RESOLVED, Phase 12)** — base-side spending
+  denominator realism introduced. Owl's withdrawal-rate
+  denominator is configurable across `total_nav` (default,
+  byte-stable),  `liquid_nav`, `liquid_plus_income_producing_nav`,
+  and `custom_policy`. Both initial-rate and current-rate
+  denominators are replaced symmetrically; rate-band geometry
+  preserved. Flow-side distributable-income realism remains open
+  until Phase 12.5 (`distributable_income` mode + new
+  `distribution_inflow` ledger flow type).
 
 A future contributor reading any spending- or liquidity-related
 phase should treat this section as governing context — not the
@@ -594,7 +597,7 @@ doesn't have to skim eighteen entries to know what's open.
 | L16 | Owl is scale-invariant in initial NAV | **RESOLVED** | Phase 11 (optional absolute-dollar clamps in `GuardrailConfig`) |
 | L17 | Cross-engine metric comparability is not meaningful | **ACCEPTED LIMITATION** | Phase 10 consolidation — interpretation problem, not architecture |
 | L18 | Owl misreads inflation shock as "headroom" and raises spending | **RESOLVED** | Phase 4a |
-| L19 | Spending base realism for illiquid SFO balance sheets | **OPEN — modeling** | Future phase (post Phase 11). Owl uses total NAV; SFOs need spendable-resource / liquidity-adjusted base |
+| L19 | Spending base realism for illiquid SFO balance sheets | **PARTIALLY RESOLVED** | Phase 12 (base-side); flow-side distributable-income realism remains open until Phase 12.5 |
 
 #### Status definitions
 
@@ -1361,12 +1364,29 @@ The original Phase 3c text follows for audit-trail purposes:
   absolute dollar guardrails; switching to an absolute-dollar guardrail
   is a real-world refinement but doesn't qualify as Phase 3c minimum.
 
-### L19 — Spending base realism for illiquid SFO balance sheets
+### L19 — Spending base realism for illiquid SFO balance sheets — [PARTIALLY RESOLVED 2026-05-02, Phase 12]
 
-> **Status: OPEN — modeling.** Documented as future work; **not
-> implemented**. Phase 11 / L16 fix is **scale-invariance only**, not
-> spending-base realism — these are distinct concerns and both must
-> be resolved before Owl is family-office-realistic.
+> **Status: PARTIALLY RESOLVED in Phase 12.** Base-side spending
+> denominator realism introduced. Flow-side distributable-income
+> realism remains open until Phase 12.5.
+>
+> Owl's withdrawal-rate denominator is now configurable via
+> ``GuardrailConfig.spending_base`` across four modes — `total_nav`
+> (default, byte-stable with Phase 11), `liquid_nav`,
+> `liquid_plus_income_producing_nav`, and `custom_policy` — with
+> both the initial-rate and current-rate denominators replaced
+> symmetrically. The standing principle's distinction between
+> *total NAV* and *spendable resources* is now expressible in
+> config and visible in the report (`## Owl spending base
+> (advisory)`).
+>
+> The mode ``liquid_plus_income_producing_nav`` includes the **NAV**
+> of buckets tagged ``income_producing``; it does NOT measure
+> actual distributable income. Stabilized real estate tagged
+> ``income_producing=true`` contributes its appraised NAV to this
+> base — overstating spending capacity vs. its true distributable
+> yield. The structurally correct fix (realized distributions as
+> a ledger flow type) is Phase 12.5.
 
 * **Model behavior.** ``OwlRule.quarterly_outflow_at`` reads
   ``ledger.end_nav_through(prior_q).sum()`` — i.e., **total modeled
@@ -6905,3 +6925,72 @@ future spending- and liquidity-related modeling work.
   reference. Future scope changes follow the protocol in
   `PROJECT_SCOPE.md` §8 — scope-lock commits and implementation
   commits stay disjoint.
+
+### 2026-05-02 — Phase 12 design-lock: L19 spending base realism (pre-implementation)
+
+* **What.** Docs-only design-lock commit. Adds the
+  ``## Phase 12 design (pre-implementation) — L19 spending base
+  realism`` block to `MODEL_DOCUMENTATION.md`. Subsequently
+  amended in a second docs-only commit to apply three reviewer
+  tightenings: (1) rename ``liquid_plus_income`` to
+  ``liquid_plus_income_producing_nav`` with explicit "NAV not
+  income" callout; (2) document ``income_producing`` as bucket-
+  level static metadata bridge, not asset/entity/property-level
+  cash-flow modeling; (3) ``spending_base_weights`` becomes
+  bucket-keyed with strict validation (valid CMA bucket keys,
+  finite, ≥0, ≥1 positive, base must be > 0 when used).
+* **Why.** Under the SFO use case Owl's withdrawal-rate trigger
+  measures rate against total NAV, but for a Gen3–Gen5 SFO with
+  large illiquid balance sheet the household's actual spendable
+  rate is 2–3× higher. The base-side fix is the gating modeling
+  improvement before any cash-flow ingestion / entity schema /
+  RE+OpCo pipeline lands.
+* **Tests.** Docs-only; zero code change.
+* **Backward-compatible.** Yes — design only.
+
+### 2026-05-02 — Phase 12 implementation: L19 base-side spending realism
+
+* **What.** Implements the design-lock above as one cohesive
+  commit. Owl's withdrawal-rate denominator is now configurable
+  via ``GuardrailConfig.spending_base`` across four modes:
+  ``total_nav`` (default, byte-stable with Phase 11),
+  ``liquid_nav``, ``liquid_plus_income_producing_nav``, and
+  ``custom_policy`` (bucket-keyed inclusion weights). Both
+  initial-rate and current-rate denominators are replaced
+  symmetrically; rate-band geometry preserved. ``CMAConfig``
+  gains an optional fourth liquidity tier ``"locked_strategic"``
+  and an optional ``income_producing: dict[str, bool]`` flag.
+  ``StudyConfig`` cross-validates every required combination
+  loudly. ``compute_spending_base`` is a new pure helper in
+  ``src/aa_model/spending/spending_base.py``. ``OwlRule.diagnostics()``
+  surfaces both exclusion breakdowns + dual withdrawal rates.
+  ``report.md`` gains a new ``## Owl spending base (advisory)``
+  section with two render modes (non-default-base full
+  diagnostic + default-base material-illiquid warning).
+* **Why.** Closes the base-side of L19 (flow-side
+  ``distributable_income`` mode is parked in the Literal but
+  raises ``NotImplementedError`` — Phase 12.5 lands the new
+  ``distribution_inflow`` ledger flow type). Implements the
+  reviewer tightenings without scope creep.
+* **Files touched.** ``src/aa_model/io/schemas.py`` (Guardrail
+  + CMA + StudyConfig validators); ``src/aa_model/assumptions/cma.py``
+  (income_producing series); ``src/aa_model/spending/base.py``
+  (SpendingParams CMA-tag fields); ``src/aa_model/spending/owl_adapter.py``
+  (denominator swap + extended diagnostics);
+  ``src/aa_model/spending/spending_base.py`` (NEW — pure helper
+  + ``SpendingBaseBreakdown``); ``src/aa_model/integration/orchestrator.py``
+  (CMA-tag wire-through); ``src/aa_model/integration/report.py``
+  (new advisory section, additive — no changes to existing
+  sections); ``tests/test_phase12_spending_base.py`` (NEW — 13
+  tests).
+* **Tests.** 13 new tests across schema (4), base computation
+  (3 + 1 NotImplementedError stub), Owl integration (4), and
+  end-to-end report rendering (2). Existing 225-test baseline
+  passes unchanged via the default-off byte-stability of
+  ``spending_base=None``.
+* **Backward-compatible.** Yes. ``spending_base=None`` short-
+  circuits to ``total_nav``; ``compute_spending_base`` returns
+  ``nav.sum()`` exactly. Existing fixtures, configs, and
+  trajectories byte-identical to Phase 11.
+* **L19.** Flips to ``[PARTIALLY RESOLVED 2026-05-02, Phase 12]``.
+  Base-side closed; flow-side open until Phase 12.5.

@@ -43,11 +43,23 @@ from aa_model.io.schemas import SpendingConfig
 
 @dataclass(frozen=True)
 class SpendingParams:
-    """Inputs the rule needs beyond the ledger itself."""
+    """Inputs the rule needs beyond the ledger itself.
+
+    Phase 12 / L19 added the two optional ``cma_*`` tag fields. They
+    are optional so flat_real / smoothing call sites (which have no
+    rate concept) can construct ``SpendingParams`` without threading
+    CMA. ``OwlRule`` raises if a non-default ``spending_base`` is
+    selected and the required tag is absent.
+    """
 
     config: SpendingConfig
     start_quarter: pd.Period
     num_quarters: int
+    # Phase 12 / L19: bucket-level CMA tags surfaced for the Owl
+    # spending base. Static config, not ledger state — does not
+    # interact with the closed-prior-quarter contract.
+    cma_liquidity: pd.Series | None = None
+    cma_income_producing: pd.Series | None = None
 
 
 class SpendingRule(ABC):

@@ -157,10 +157,21 @@ def _build_ledger(
     running_nav: dict[str, float] = dict(initial)
 
     rule = make_rule(cfg.spending.rule)
-    spend_params = SpendingParams(config=cfg.spending, start_quarter=start_q, num_quarters=n_q)
-
+    # Build CMA before SpendingParams so the Phase 12 / L19 spending
+    # base has access to bucket-level liquidity + income_producing
+    # tags. flat_real / smoothing ignore them; OwlRule reads them
+    # only when guardrail.spending_base is non-default.
     alloc = make_allocator(cfg.allocation, engine=cfg.base.allocation.engine)
     cma = CMA.from_config(cfg.cma)
+    spend_params = SpendingParams(
+        config=cfg.spending,
+        start_quarter=start_q,
+        num_quarters=n_q,
+        cma_liquidity=cma.liquidity if not cma.liquidity.empty else None,
+        cma_income_producing=(
+            cma.income_producing if not cma.income_producing.empty else None
+        ),
+    )
     alloc.fit(returns=pd.DataFrame(), cma=cma, constraints=Constraints())
     alloc_params = AllocationParams(
         config=cfg.allocation, start_quarter=start_q, num_quarters=n_q

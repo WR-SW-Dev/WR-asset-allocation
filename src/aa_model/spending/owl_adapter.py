@@ -87,6 +87,10 @@ import pandas as pd
 from aa_model.integration.ledger import QuarterlyLedger
 from aa_model.spending.base import SpendingParams, SpendingRule
 from aa_model.spending.rules import _quarter_offset, _read_own_prior_spend
+from aa_model.spending.spending_base import (
+    SpendingBaseBreakdown,
+    compute_spending_base,
+)
 
 
 class OwlRule(SpendingRule):
@@ -102,15 +106,72 @@ class OwlRule(SpendingRule):
         self._min_clamp_activations: int = 0
         self._max_clamp_activations: int = 0
         self._last_start_quarter: pd.Period | None = None
+        # Phase 12 / L19 diagnostics — populated at the year-boundary
+        # path each year so the report can surface base-side realism.
+        # These are last-evaluation snapshots, not run-aggregates: the
+        # report uses the most recent value (the "run end" snapshot).
+        self._last_spending_base_mode: str | None = None
+        self._last_spending_base_realized: SpendingBaseBreakdown | None = None
+        self._last_spending_base_initial: SpendingBaseBreakdown | None = None
+        self._last_total_nav_realized: float = 0.0
+        self._last_annual_spend: float = 0.0
 
     def diagnostics(self) -> dict:
-        """Return Phase 11 clamp-activation counts. Resets when the rule
-        sees a new ``params.start_quarter`` (i.e., a new run)."""
-        return {
+        """Return Phase 11 clamp-activation counts plus Phase 12
+        spending-base snapshots from the most recent year-boundary
+        evaluation. Resets when the rule sees a new
+        ``params.start_quarter`` (i.e., a new run)."""
+        out: dict = {
             "engine": "OwlRule",
             "min_clamp_activations": self._min_clamp_activations,
             "max_clamp_activations": self._max_clamp_activations,
+            "spending_base_mode": self._last_spending_base_mode,
+            "spending_base_run_end_usd": (
+                self._last_spending_base_realized.base_usd
+                if self._last_spending_base_realized is not None
+                else 0.0
+            ),
+            "spending_base_initial_usd": (
+                self._last_spending_base_initial.base_usd
+                if self._last_spending_base_initial is not None
+                else 0.0
+            ),
+            "total_nav_run_end_usd": self._last_total_nav_realized,
+            "excluded_nav_by_tier_usd": (
+                dict(self._last_spending_base_realized.excluded_by_tier_usd)
+                if self._last_spending_base_realized is not None
+                else {}
+            ),
+            "excluded_nav_by_income_flag_usd": (
+                dict(self._last_spending_base_realized.excluded_by_income_flag_usd)
+                if self._last_spending_base_realized is not None
+                else {}
+            ),
         }
+        # Withdrawal-rate comparison snapshots. Guarded for divide-by-zero.
+        annual = self._last_annual_spend
+        total_nav = self._last_total_nav_realized
+        base_usd = out["spending_base_run_end_usd"]
+        out["withdrawal_rate_vs_total_nav"] = (
+            (annual / total_nav) if total_nav > 0.0 else 0.0
+        )
+        out["withdrawal_rate_vs_spending_base"] = (
+            (annual / base_usd) if base_usd > 0.0 else 0.0
+        )
+        # (illiquid + locked_strategic) / total_nav at run end —
+        # consumed by the report's default-base material-illiquid
+        # warning (reviewer tightening: alert when default mode is
+        # used but the SFO has material non-spendable NAV).
+        excluded_by_tier = out["excluded_nav_by_tier_usd"]
+        if total_nav > 0.0 and excluded_by_tier:
+            material = float(
+                excluded_by_tier.get("illiquid", 0.0)
+                + excluded_by_tier.get("locked_strategic", 0.0)
+            )
+            out["material_illiquid_share"] = material / total_nav
+        else:
+            out["material_illiquid_share"] = 0.0
+        return out
 
     def quarterly_outflow_at(
         self,
@@ -127,11 +188,16 @@ class OwlRule(SpendingRule):
         if initial_nav_total <= 0.0:
             raise ValueError(f"OwlRule requires positive initial NAV; got {initial_nav_total}")
 
-        # Reset clamp activations on a new run (new start_quarter).
+        # Reset clamp + base diagnostics on a new run (new start_quarter).
         if self._last_start_quarter != params.start_quarter:
             self._min_clamp_activations = 0
             self._max_clamp_activations = 0
             self._last_start_quarter = params.start_quarter
+            self._last_spending_base_mode = None
+            self._last_spending_base_realized = None
+            self._last_spending_base_initial = None
+            self._last_total_nav_realized = 0.0
+            self._last_annual_spend = 0.0
 
         # q0 initialization — no guardrail, no inflation, no ledger read.
         # Floor / ceiling clip is applied so a rule emitting a clipped value
@@ -154,10 +220,45 @@ class OwlRule(SpendingRule):
         prior_annual = prior_quarterly * 4.0
         annual_spend = prior_annual * (1.0 + cfg.inflation_pct)
 
-        nav_realized = float(ledger.end_nav_through(prior_q).sum())
-        if nav_realized > 0.0:
-            initial_rate = cfg.annual_spend_usd / initial_nav_total
-            current_rate = annual_spend / nav_realized
+        # Phase 12 / L19: replace the rate-band denominators with the
+        # configured spending base on both sides. Default
+        # (gr.spending_base in {None, "total_nav"}) is byte-identical
+        # to the Phase 11 path (compute_spending_base short-circuits
+        # to nav.sum()).
+        nav_realized_series = ledger.end_nav_through(prior_q)
+        nav_realized_total = float(nav_realized_series.sum())
+        realized = compute_spending_base(
+            nav_realized_series,
+            params.cma_liquidity,
+            params.cma_income_producing,
+            gr.spending_base,
+            gr.spending_base_weights,
+        )
+        initial_nav_series = pd.Series(ledger.initial_nav, dtype=float)
+        initial = compute_spending_base(
+            initial_nav_series,
+            params.cma_liquidity,
+            params.cma_income_producing,
+            gr.spending_base,
+            gr.spending_base_weights,
+        )
+
+        # Phase 12 reviewer tightening 3 runtime guard: the initial
+        # base must be > 0 whenever Owl needs the rate denominator.
+        # Detects pathological configs (every weight zeros every
+        # bucket the household actually owns) before the rate-band
+        # math goes near a divide-by-zero.
+        if initial.base_usd <= 0.0:
+            raise ValueError(
+                f"OwlRule: initial spending base is {initial.base_usd}; "
+                f"selected mode={gr.spending_base!r}; "
+                f"weights={gr.spending_base_weights!r}; "
+                f"initial_nav_by_bucket={dict(initial_nav_series)}"
+            )
+
+        if realized.base_usd > 0.0:
+            initial_rate = cfg.annual_spend_usd / initial.base_usd
+            current_rate = annual_spend / realized.base_usd
             if current_rate < initial_rate * (1.0 - gr.lower_band_pct):
                 annual_spend *= 1.0 + gr.raise_pct
             elif current_rate > initial_rate * (1.0 + gr.upper_band_pct):
@@ -166,8 +267,7 @@ class OwlRule(SpendingRule):
         # Phase 11 / L16: optional absolute-dollar clamps. Break the
         # rate-based scale-invariance by introducing dollar-denominated
         # decisions in the trigger output. Activations are tracked for
-        # the report diagnostic. **Does NOT address L19 spending-base
-        # realism — Owl still measures rate against total NAV.**
+        # the report diagnostic.
         if gr.absolute_min_annual_usd is not None:
             if annual_spend < gr.absolute_min_annual_usd:
                 annual_spend = float(gr.absolute_min_annual_usd)
@@ -176,6 +276,15 @@ class OwlRule(SpendingRule):
             if annual_spend > gr.absolute_max_annual_usd:
                 annual_spend = float(gr.absolute_max_annual_usd)
                 self._max_clamp_activations += 1
+
+        # Phase 12 / L19: snapshot the most recent year-boundary
+        # spending-base evaluation for diagnostics(). The report
+        # surfaces the run-end snapshot (last call wins).
+        self._last_spending_base_mode = gr.spending_base
+        self._last_spending_base_realized = realized
+        self._last_spending_base_initial = initial
+        self._last_total_nav_realized = nav_realized_total
+        self._last_annual_spend = float(annual_spend)
 
         quarterly = annual_spend / 4.0
         return max(cfg.floor_usd, min(cfg.ceiling_usd, quarterly))

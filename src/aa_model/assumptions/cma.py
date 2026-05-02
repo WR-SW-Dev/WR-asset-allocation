@@ -33,13 +33,21 @@ class CMA:
         expected_returns_annual: index = bucket, values = annual mean return.
         vol_annual: index = bucket, values = annual volatility.
         corr: bucket × bucket correlation matrix.
-        liquidity: bucket → 'liquid' | 'semi_liquid' | 'illiquid' (optional).
+        liquidity: bucket → 'liquid' | 'semi_liquid' | 'illiquid' |
+            'locked_strategic' (optional; Phase 12 added 'locked_strategic').
+        income_producing: bucket → bool (optional; Phase 12 / L19).
+            Bucket-level static metadata indicating whether the bucket
+            on average produces some distributable yield. NOT
+            asset-/entity-/property-level cash-flow classification —
+            a bridge until Phase 12.5's distribution_inflow ledger flow
+            type lands.
     """
 
     expected_returns_annual: pd.Series = field(default_factory=lambda: pd.Series(dtype=float))
     vol_annual: pd.Series = field(default_factory=lambda: pd.Series(dtype=float))
     corr: pd.DataFrame = field(default_factory=pd.DataFrame)
     liquidity: pd.Series = field(default_factory=lambda: pd.Series(dtype=object))
+    income_producing: pd.Series = field(default_factory=lambda: pd.Series(dtype=bool))
 
     @classmethod
     def from_config(cls, cfg: CMAConfig) -> CMA:
@@ -71,9 +79,21 @@ class CMA:
             if cfg.liquidity is not None
             else pd.Series(dtype=object)
         )
+        # Phase 12 / L19: surface income_producing as a bool series
+        # if the config declared it. Empty series otherwise — Owl
+        # raises if a base requiring it is selected without it.
+        inc = (
+            pd.Series(
+                {b: bool(cfg.income_producing[b]) for b in buckets},
+                dtype=bool,
+            )
+            if cfg.income_producing is not None
+            else pd.Series(dtype=bool)
+        )
         return cls(
             expected_returns_annual=er,
             vol_annual=vol,
             corr=corr,
             liquidity=liq,
+            income_producing=inc,
         )

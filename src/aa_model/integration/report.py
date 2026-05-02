@@ -732,5 +732,140 @@ def write_markdown_report(
         )
         lines.append("")
 
+    # Owl spending base (Phase 12 / L19). Two render modes:
+    #   (a) non-default base — full diagnostic with both exclusion
+    #       breakdowns + dual withdrawal rates + warning bands.
+    #   (b) default base (total_nav) but ≥30% of NAV is illiquid /
+    #       locked_strategic — short warning pointing the reader at
+    #       the non-default modes (catches the "default-on but the
+    #       SFO needs a non-default base" failure mode).
+    # Gated on rule == "owl" and the rule fired.
+    if (
+        cfg.spending.rule == "owl"
+        and spending_diagnostics is not None
+        and spending_diagnostics.get("engine") == "OwlRule"
+    ):
+        mode_raw = spending_diagnostics.get("spending_base_mode")
+        mode_label = mode_raw if mode_raw is not None else "total_nav (default)"
+        is_default = mode_raw is None or mode_raw == "total_nav"
+        total_nav = float(spending_diagnostics.get("total_nav_run_end_usd", 0.0))
+        base_usd = float(spending_diagnostics.get("spending_base_run_end_usd", 0.0))
+        excl_by_tier = spending_diagnostics.get("excluded_nav_by_tier_usd", {})
+        excl_by_inc = spending_diagnostics.get("excluded_nav_by_income_flag_usd", {})
+        rate_total = float(spending_diagnostics.get("withdrawal_rate_vs_total_nav", 0.0))
+        rate_base = float(spending_diagnostics.get("withdrawal_rate_vs_spending_base", 0.0))
+        material_share = float(spending_diagnostics.get("material_illiquid_share", 0.0))
+
+        # Mode (a): non-default base full diagnostic. Render only when
+        # the rule actually entered a year-boundary path (snapshots
+        # populated) — at <4 quarters Owl never fires the year-boundary
+        # logic and the base diagnostics stay zero.
+        if not is_default and base_usd > 0.0 and total_nav > 0.0:
+            ratio = base_usd / total_nav
+            lines.append("## Owl spending base (advisory)")
+            lines.append("")
+            lines.append(f"- selected base: {mode_label}")
+            lines.append("- run-end totals:")
+            lines.append(f"  - total NAV:     ${total_nav:,.0f}")
+            lines.append(
+                f"  - spending base: ${base_usd:,.0f}   "
+                f"({ratio * 100:.0f}% of total NAV)"
+            )
+            if excl_by_tier:
+                lines.append("- excluded NAV by liquidity tier:")
+                for tier in ("liquid", "semi_liquid", "illiquid", "locked_strategic"):
+                    if tier in excl_by_tier:
+                        lines.append(f"  - {tier}: ${float(excl_by_tier[tier]):,.0f}")
+            if excl_by_inc:
+                lines.append("- excluded NAV by income_producing flag:")
+                for flag in (False, True):
+                    if flag in excl_by_inc:
+                        lines.append(
+                            f"  - income_producing={flag}: "
+                            f"${float(excl_by_inc[flag]):,.0f}"
+                        )
+            lines.append("- withdrawal-rate comparison (run end):")
+            lines.append(f"  - rate vs total NAV:     {rate_total * 100:.2f}%")
+            lines.append(
+                f"  - rate vs spending base: {rate_base * 100:.2f}%   "
+                "← rate the household actually faces"
+            )
+            lines.append("- regime:")
+            if ratio < 0.4:
+                lines.append(
+                    "  - **STRONG WARNING — spending base is materially below "
+                    f"total NAV ({ratio * 100:.0f}%). Confirm CMA tagging "
+                    "policy reflects the actual balance sheet.**"
+                )
+            elif ratio < 0.7:
+                lines.append(
+                    f"  - **WARNING — spending base is {ratio * 100:.0f}% of "
+                    "total NAV. Owl trajectory reflects spending-capacity "
+                    "rate, not paper-NAV rate.**"
+                )
+            else:
+                lines.append(
+                    "  - spending-base aware (selected base near total NAV; "
+                    "rate-band geometry preserved)."
+                )
+            lines.append("")
+            lines.append(
+                "_Phase 12 / L19 closes the base-side of spending realism. "
+                "The flow-side (realized distributions) is Phase 12.5. The "
+                "``liquid_plus_income_producing_nav`` mode includes the NAV "
+                "of buckets tagged ``income_producing``; it does not measure "
+                "actual distributable income. Stabilized real estate tagged "
+                "``income_producing=true`` contributes its appraised NAV to "
+                "this base — which still overstates spending capacity vs. "
+                "true distributable yield. For a tight distributable-income "
+                "figure see Phase 12.5 (`distributable_income` mode + new "
+                "`distribution_inflow` ledger flow type)._"
+            )
+            lines.append("")
+
+        # Mode (b): default base + material non-spendable NAV warning.
+        # Triggers when default base is in use AND ≥30% of total NAV is
+        # illiquid / locked_strategic. The diagnostic depends on the
+        # OwlRule having seen a year-boundary path (so the snapshot is
+        # populated); short runs (<4 quarters) skip this section.
+        if (
+            is_default
+            and total_nav > 0.0
+            and excl_by_tier
+            and material_share >= 0.30
+        ):
+            illiquid_usd = float(excl_by_tier.get("illiquid", 0.0))
+            locked_usd = float(excl_by_tier.get("locked_strategic", 0.0))
+            lines.append("## Owl spending base (advisory)")
+            lines.append("")
+            lines.append("- selected base: total_nav (default)")
+            lines.append("- run-end totals:")
+            lines.append(f"  - total NAV:        ${total_nav:,.0f}")
+            if illiquid_usd > 0.0:
+                lines.append(
+                    f"  - illiquid NAV:     ${illiquid_usd:,.0f}   "
+                    f"({illiquid_usd / total_nav * 100:.0f}% of total NAV)"
+                )
+            if locked_usd > 0.0:
+                lines.append(
+                    f"  - locked_strategic: ${locked_usd:,.0f}   "
+                    f"({locked_usd / total_nav * 100:.0f}% of total NAV)"
+                )
+            lines.append(
+                f"- **WARNING — spending_base = total_nav, but "
+                f"{material_share * 100:.0f}% of total NAV is illiquid or "
+                "locked_strategic. Owl is measuring withdrawal rate against "
+                "paper NAV that is not spendable. Consider setting "
+                "``spending.guardrail.spending_base`` to one of:**"
+            )
+            lines.append("  - ``liquid_nav`` (strictest)")
+            lines.append(
+                "  - ``liquid_plus_income_producing_nav`` (recommended SFO "
+                "default; note this includes NAV of income-producing "
+                "buckets, not distributable income)"
+            )
+            lines.append("  - ``custom_policy`` (per-bucket inclusion weights)")
+            lines.append("")
+
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines), encoding="utf-8")

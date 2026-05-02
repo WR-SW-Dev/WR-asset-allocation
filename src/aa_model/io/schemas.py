@@ -196,7 +196,25 @@ class CMAConfig(BaseModel):
     expected_returns_annual: dict[str, float]
     vol_annual: dict[str, float]
     correlations: dict[str, dict[str, float]]
-    liquidity: dict[str, Literal["liquid", "semi_liquid", "illiquid"]] | None = None
+    # Phase 12 / L19: ``"locked_strategic"`` added as a fourth tier
+    # (additive — old 3-tier configs load unchanged). Tag OpCo
+    # equity, development real estate, development land, and any
+    # other bucket whose value never enters spending decisions
+    # short of an explicit liquidity event.
+    liquidity: (
+        dict[str, Literal["liquid", "semi_liquid", "illiquid", "locked_strategic"]]
+        | None
+    ) = None
+    # Phase 12 / L19: optional per-bucket flag. Required by
+    # StudyConfig cross-validator only when
+    # spending.guardrail.spending_base == "liquid_plus_income_producing_nav".
+    # NOTE: this is a bucket-level static CMA tag, not asset-,
+    # entity-, or property-level cash-flow classification — a
+    # bridge until Phase 12.5's distribution_inflow ledger flow
+    # type lands. A True flag means "this bucket contains assets
+    # that on average produce some distributable yield"; it does
+    # NOT mean "this bucket's dollars are spendable income."
+    income_producing: dict[str, bool] | None = None
 
     @field_validator("expected_returns_annual")
     @classmethod
@@ -291,6 +309,20 @@ class CMAConfig(BaseModel):
             extra = sorted(set(self.liquidity.keys()) - er_buckets)
             raise ValueError(
                 f"liquidity bucket set mismatch — missing: {missing}, extra: {extra}"
+            )
+
+        # Phase 12 / L19: income_producing must cover every bucket
+        # when present (no silent default-False — reviewer
+        # tightening 2 / scope discipline).
+        if (
+            self.income_producing is not None
+            and set(self.income_producing.keys()) != er_buckets
+        ):
+            missing = sorted(er_buckets - set(self.income_producing.keys()))
+            extra = sorted(set(self.income_producing.keys()) - er_buckets)
+            raise ValueError(
+                f"income_producing bucket set mismatch — "
+                f"missing: {missing}, extra: {extra}"
             )
 
         # PSD check on the assembled covariance matrix Σ = diag(vol)·corr·diag(vol).
@@ -462,6 +494,42 @@ class GuardrailConfig(BaseModel):
     absolute_min_annual_usd: float | None = Field(default=None, ge=0.0)
     absolute_max_annual_usd: float | None = Field(default=None, gt=0.0)
 
+    # Phase 12 / L19: optional spending-base selector. Default
+    # None ≡ "total_nav" — Owl measures rate against
+    # ledger.end_nav_through(prior_q).sum() on both rate sides,
+    # byte-identical to Phase 11. When set to a non-default
+    # value, both initial_rate and current_rate denominators are
+    # replaced by compute_spending_base(...) on the same NAV view.
+    # Owl-only — flat_real / smoothing have no rate concept.
+    #
+    # ``"distributable_income"`` is parked in the Literal but
+    # raises NotImplementedError at runtime; Phase 12.5 lands the
+    # new ``distribution_inflow`` ledger flow type.
+    #
+    # ``"liquid_plus_income_producing_nav"`` includes the **NAV**
+    # of buckets tagged ``income_producing``; it does NOT measure
+    # actual distributable income (reviewer tightening 1).
+    spending_base: (
+        Literal[
+            "total_nav",
+            "liquid_nav",
+            "liquid_plus_income_producing_nav",
+            "custom_policy",
+            "distributable_income",
+        ]
+        | None
+    ) = Field(default=None)
+
+    # Phase 12 / L19: only meaningful when spending_base ==
+    # "custom_policy". Bucket-keyed (NOT tier-keyed) — gives the
+    # SFO user per-bucket inclusion control. Validation lives on
+    # StudyConfig (needs CMA bucket universe to check keys):
+    # every key must be a valid CMA bucket; values finite, ≥0;
+    # ≥1 positive; unspecified buckets default to 0; runtime
+    # guard in OwlRule ensures resulting base > 0 when used as
+    # the rate denominator (reviewer tightening 3).
+    spending_base_weights: dict[str, float] | None = Field(default=None)
+
     @field_validator("absolute_min_annual_usd", "absolute_max_annual_usd")
     @classmethod
     def _absolute_clamp_finite(cls, v: float | None) -> float | None:
@@ -474,6 +542,41 @@ class GuardrailConfig(BaseModel):
             raise ValueError(f"absolute clamp value must be finite; got {v!r}")
         return v
 
+    @field_validator("spending_base_weights")
+    @classmethod
+    def _weights_finite_nonneg_and_positive(
+        cls, v: dict[str, float] | None
+    ) -> dict[str, float] | None:
+        # Phase 12 / L19 reviewer tightening 3: per-weight checks.
+        # Bucket-key validity vs CMA universe is enforced at the
+        # StudyConfig level (needs cross-config visibility).
+        if v is None:
+            return v
+        if not v:
+            raise ValueError(
+                "spending_base_weights must be non-empty when set; "
+                "use spending_base='total_nav' to include every bucket"
+            )
+        any_positive = False
+        for bucket, w in v.items():
+            wf = float(w)
+            if not math.isfinite(wf):
+                raise ValueError(
+                    f"spending_base_weights[{bucket!r}] = {w!r} is not finite"
+                )
+            if wf < 0.0:
+                raise ValueError(
+                    f"spending_base_weights[{bucket!r}] = {wf} < 0"
+                )
+            if wf > 0.0:
+                any_positive = True
+        if not any_positive:
+            raise ValueError(
+                "spending_base_weights must have at least one strictly "
+                "positive weight; all-zero blends produce a zero base"
+            )
+        return v
+
     @model_validator(mode="after")
     def _absolute_band_bounds_well_formed(self) -> GuardrailConfig:
         if (
@@ -484,6 +587,22 @@ class GuardrailConfig(BaseModel):
             raise ValueError(
                 f"absolute_min_annual_usd ({self.absolute_min_annual_usd}) > "
                 f"absolute_max_annual_usd ({self.absolute_max_annual_usd})"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _spending_base_weights_only_with_custom_policy(self) -> GuardrailConfig:
+        # Phase 12 / L19: weights are meaningful only for
+        # custom_policy. A weights dict with any other base is a
+        # config mistake — fail loud rather than silently ignore.
+        if self.spending_base_weights is not None and self.spending_base != "custom_policy":
+            raise ValueError(
+                "spending_base_weights is only meaningful when "
+                f"spending_base='custom_policy'; got {self.spending_base!r}"
+            )
+        if self.spending_base == "custom_policy" and self.spending_base_weights is None:
+            raise ValueError(
+                "spending_base='custom_policy' requires spending_base_weights"
             )
         return self
 
@@ -770,3 +889,50 @@ class StudyConfig(BaseModel):
     pe_pacing: PEPacingConfig
     scenarios: ScenariosConfig
     fixture_scenario: FixtureScenarioConfig
+
+    @model_validator(mode="after")
+    def _phase12_spending_base_cross_config(self) -> StudyConfig:
+        """Phase 12 / L19 cross-config validation for the spending base.
+
+        These checks need both ``cma`` and ``spending.guardrail`` in
+        scope, so they live here rather than on either sub-config.
+        """
+        gr = self.spending.guardrail
+        if gr is None:
+            return self
+        base = gr.spending_base
+        if base is None or base == "total_nav":
+            return self  # default behavior — no cross-config requirements
+
+        cma_buckets = set(self.cma.expected_returns_annual.keys())
+
+        # Any non-total_nav base requires CMA liquidity tags covering
+        # every bucket. CMAConfig already validates bucket coverage
+        # when liquidity is present; here we enforce its presence.
+        if self.cma.liquidity is None:
+            raise ValueError(
+                f"spending.guardrail.spending_base={base!r} requires "
+                f"cma.liquidity to be set (covering every bucket)"
+            )
+
+        if base == "liquid_plus_income_producing_nav":
+            if self.cma.income_producing is None:
+                raise ValueError(
+                    "spending.guardrail.spending_base="
+                    "'liquid_plus_income_producing_nav' requires "
+                    "cma.income_producing to be set (covering every bucket)"
+                )
+            # CMAConfig already enforced bucket-set equality when
+            # income_producing is present; no further check needed here.
+
+        if base == "custom_policy":
+            weights = gr.spending_base_weights
+            assert weights is not None  # GuardrailConfig validator caught this
+            unknown = sorted(set(weights.keys()) - cma_buckets)
+            if unknown:
+                raise ValueError(
+                    f"spending_base_weights references unknown CMA bucket(s): "
+                    f"{unknown}. Valid buckets: {sorted(cma_buckets)}"
+                )
+
+        return self
