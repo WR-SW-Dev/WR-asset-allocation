@@ -1886,6 +1886,212 @@ Listed explicitly so a future contributor reads them as guardrails:
 
 ---
 
+## Phase 6 design (pre-implementation) — correlation_shock (L6)
+
+> **One-line goal.** A scenario-driven perturbation layer that
+> modifies the **CMA correlation matrix only**, preserving the
+> invariant ``CMA = baseline prior; scenario = perturbation layer``.
+> No vol changes, no return changes, no allocator-objective changes,
+> no time variation. **L6 closes** when this lands.
+
+### Load-bearing rules
+
+1. **CMA immutability.** The loaded ``CMA`` is never mutated. The
+   shock operates on a copy and produces a new ``CMA`` instance.
+2. **Perturbation-only.** Only ``corr`` may change. ``vol_annual`` and
+   ``expected_returns_annual`` pass through unchanged.
+3. **Static per run.** The shock is applied once, before the
+   per-quarter loop starts. No quarter-dependent or time-varying
+   correlation.
+4. **Validity is hard.** The post-shock matrix must satisfy:
+   symmetry, diagonal == 1, entries in ``[-1, 1]``, and the
+   assembled covariance ``Σ = diag(vol) · corr · diag(vol)`` must
+   pass the same PSD check the CMA loader uses
+   (``λ_min ≥ -1e-9``). Any violation **fails loudly** at run
+   start. **No silent repair**, no nearest-PSD projection, no
+   blending.
+5. **No optimizer awareness change.** ``RiskfolioAdapter`` consumes
+   the shocked CMA exactly as it consumes the baseline.
+   ``CvxportfolioAllocator`` continues to ignore CMA entirely. No
+   change to either objective.
+
+### Scenario schema (discriminated union)
+
+```python
+class _ScaleCorrelationShock(BaseModel):
+    type: Literal["scale"]
+    magnitude: float  # positive, finite
+
+class _OverrideCorrelationShock(BaseModel):
+    type: Literal["override"]
+    matrix: dict[str, dict[str, float]]  # partial; auto-mirrored
+
+CorrelationShock = Annotated[
+    _ScaleCorrelationShock | _OverrideCorrelationShock,
+    Field(discriminator="type"),
+]
+```
+
+The shock attaches to a ``Scenario`` (carried alongside the existing
+optional ``fixture_scenario`` / ``pe_pacing`` / ``spending`` fields).
+A new optional ``correlation_shock: CorrelationShock | None`` field
+is added to the ``Scenario`` dataclass. Existing scenarios that
+don't set it pass through with no CMA modification.
+
+### Variant semantics
+
+#### `scale` — sign-preserving amplification
+
+```
+ρ_new[i,j] = clip(ρ_baseline[i,j] · magnitude, -1, 1)   for i ≠ j
+ρ_new[i,i] = 1                                            (diagonal preserved)
+```
+
+* Positive correlations move **further from 0** (more positive).
+* Negative correlations also move **further from 0** (more
+  negative — the operation is sign-preserving multiplication, not
+  shrink-toward-1).
+* Use `scale` to amplify existing co-movement direction. To force
+  a "crisis-style all-risky-toward-+1" regime, use `override`
+  instead — `scale` is not the right tool for that.
+* `magnitude` must be positive and finite. Negative magnitudes
+  would flip every off-diagonal sign — almost certainly a user
+  error; failed at schema time.
+* The clip-to-``[-1, 1]`` step is the only deviation from pure
+  multiplication. The report emits ``max |Δρ|`` and a count of
+  clipped entries so silent saturation is visible to the reader.
+* `scale` always applies to **every off-diagonal entry**. It does
+  not take a `target` field — for targeted stress, use `override`.
+  Avoids overlapping capability between the two variants.
+
+#### `override` — explicit pairwise replacement
+
+```python
+matrix: dict[str, dict[str, float]]
+```
+
+* User specifies one direction (``matrix["a"]["b"] = 0.95``);
+  validator auto-mirrors to ``corr_new[a,b] = corr_new[b,a] = 0.95``.
+* If both directions are supplied and they **disagree** within
+  ``1e-9``, **fail loudly** with both values in the error. Do not
+  silently average.
+* Unspecified entries pass through from the baseline ``corr``.
+* Unknown bucket names fail at apply time with a precise
+  bucket-name error.
+* Diagonal entries (``matrix["a"]["a"]``) must equal ``1.0``
+  within ``1e-9`` if specified; otherwise omitted.
+* Per-cell values must be in ``[-1, 1]``.
+
+### Application point
+
+Inside the orchestrator's ``_build_ledger``:
+
+```
+baseline_cma = CMA.from_config(cfg.cma)
+cma          = (apply_correlation_shock(baseline_cma, scenario.correlation_shock)
+                if scenario and scenario.correlation_shock else baseline_cma)
+alloc.fit(returns=..., cma=cma, constraints=...)
+```
+
+Both the baseline and the shocked CMA are surfaced to the report so
+the "max |Δρ|" diagnostic can be computed without re-running the
+shock logic.
+
+### Validation order (apply-time)
+
+1. ``apply_correlation_shock`` constructs a new correlation
+   ``DataFrame`` from the baseline copy + the shock.
+2. Per-cell bounds re-checked (clip for ``scale``; range check for
+   ``override``).
+3. Symmetry holds by construction (``scale`` is symmetric in the
+   multiplicand; ``override`` writes both ``[i,j]`` and ``[j,i]``
+   with the same value). No symmetrization step needed.
+4. PSD check: assemble ``Σ = diag(vol) · corr_new · diag(vol)``;
+   compute ``λ_min``; raise ``ValueError`` if
+   ``λ_min < -1e-9`` with ``λ_min`` in the error message.
+5. Construct and return a new ``CMA`` dataclass; the baseline is
+   left intact (immutability).
+
+### Report additions
+
+A new top-level ``## Correlation shock (scenario)`` section appears
+in ``report.md`` only when a shock is active. Includes:
+
+* shock ``type``
+* ``scale``: ``magnitude``; count of entries clipped to ``[-1, 1]``
+* ``override``: count of cell pairs replaced
+* ``max |Δρ|`` against the baseline ``corr`` (off-diagonal only)
+* PSD status (``pass`` if we reached this section — failure is loud
+  at apply time)
+* a one-line note that the CMA baseline was preserved and this is
+  a perturbation layer
+
+The existing ``## Capital market assumptions`` section continues to
+display the **shocked** values (since that is what the allocator
+actually saw), with no change to its layout.
+
+### What Phase 6 is **not**
+
+Listed explicitly so a future contributor reads them as guardrails:
+
+* **Not a vol or return shock.** ``vol_annual`` and
+  ``expected_returns_annual`` pass through unchanged. Magnitude /
+  override fields cannot touch either.
+* **Not time-varying.** A single shock is applied once at run
+  start; no per-quarter trajectory, no regime switching.
+* **Not a CMA replacement.** The baseline ``cfg.cma`` is the
+  prior; the shock perturbs a copy. Replacing the CMA would
+  collapse the "baseline vs perturbation" separation.
+* **Not a STAIRS layer.** Phase 7+. Not unblocked until L6 is in
+  observation.
+* **Not a PSD repair.** Failure is the verdict; the user fixes the
+  shock spec, not the validator.
+* **Not an optimizer-objective change.** Both allocator engines
+  consume the shocked CMA exactly as they consume the baseline.
+
+### Tests planned
+
+Schema (pydantic-level):
+
+* ``scale`` rejects non-finite or non-positive magnitude.
+* ``override`` rejects per-cell values outside ``[-1, 1]``,
+  diagonal != 1, conflicting symmetric pairs.
+* Discriminated union routes by ``type``.
+
+Apply-time:
+
+* ``scale`` is sign-preserving (positive and negative correlations
+  both grow in magnitude).
+* ``scale`` clips beyond ``[-1, 1]`` and exposes the clipped count.
+* ``override`` partial merge + auto-mirror.
+* ``override`` rejects unknown bucket names with the bucket name
+  in the error.
+* ``override`` rejects asymmetric supply with both values in the
+  error.
+* PSD failure raises with ``λ_min`` in the error message.
+* Baseline ``CMA`` is unchanged after ``apply_correlation_shock``
+  (immutability).
+
+End-to-end:
+
+* New ``crisis_correlation`` scenario applies an ``override`` shock
+  (the shipped CMA has identity off-diagonals, so ``scale`` is a
+  no-op against it; ``override`` is the right vehicle for
+  end-to-end visibility).
+* Riskfolio sees the shocked correlations.
+* Report includes the new ``## Correlation shock (scenario)``
+  section with the right diagnostics.
+
+### Locked design choices
+
+* Full matrix throughout (no upper-triangle form).
+* PSD tolerance fixed at ``-1e-9`` (re-using the existing CMA
+  validator's threshold).
+* No exposure of the tolerance as a config field.
+* ``liquidity`` field is unaffected — shocks are correlation-only.
+
+---
+
 ## Change Log
 
 Entries are appended in chronological order. Each entry: date, commit hash,
@@ -3022,3 +3228,50 @@ what changed, why, impact on outputs, backward-compatibility flag.
   pattern Phase 4a used when removing
   `forecast_quarterly_return_pct`). All in-tree configs and
   fixtures are updated.
+
+### 2026-05-02 — Phase 6 design locked (correlation_shock / L6, pre-implementation)
+
+* **What.** Lock the §Phase 6 design ahead of implementation. A
+  scenario-driven perturbation layer for the CMA correlation matrix
+  only. Six locked decisions:
+  1. **Discriminated-union schema.** Two variants:
+     ``scale {type, magnitude}`` and
+     ``override {type, matrix}``. No shared fields beyond
+     ``type``.
+  2. **`scale` is sign-preserving amplification** with
+     ``ρ_new = clip(ρ × magnitude, -1, 1)`` for off-diagonals.
+     Positive correlations move further positive; negative move
+     further negative. To force a "tighten everything toward +1"
+     regime, use `override`. ``scale`` always applies to **every**
+     off-diagonal entry — no `target` field; targeted stress is
+     `override`'s job.
+  3. **`override` partial merge with auto-mirror** for the user-
+     supplied direction. If both directions are supplied and
+     **disagree**, fail loudly with both values. **No silent
+     averaging.** Diagonal entries (if specified) must equal 1.0
+     within 1e-9; per-cell values in ``[-1, 1]``; unknown bucket
+     names fail at apply time with the bucket name in the error.
+  4. **CMA immutability + perturbation-only.** Baseline ``CMA`` is
+     never mutated; shock operates on a copy and produces a new
+     instance. Only ``corr`` may change; ``vol_annual`` and
+     ``expected_returns_annual`` pass through unchanged.
+  5. **Validation is hard.** Post-shock matrix must satisfy
+     symmetry (by construction in both variants), diagonal == 1,
+     entries in ``[-1, 1]``, and PSD on the assembled covariance
+     at fixed ``-1e-9`` tolerance. Failure raises ``ValueError``
+     with ``λ_min`` in the message. **No PSD repair, no
+     nearest-matrix projection, no blending.**
+  6. **No optimizer-objective change.** ``RiskfolioAdapter``
+     consumes the shocked CMA as if it were the baseline.
+     ``CvxportfolioAllocator`` continues to ignore CMA. No
+     allocator API change.
+* **What this is not.** Not a vol/return shock; not time-varying;
+  not a CMA replacement; not a STAIRS layer (Phase 7+, blocked
+  on L6 observation); not a PSD repair; not an optimizer change.
+* **Why.** Phase 5 landed an explicit CMA correlation matrix —
+  L6 is the natural unblock. STAIRS would stack regime/time-varying
+  complexity on top of an unshocked CMA prior; correlation shocks
+  give the static stress-test layer first, validate it, then layer
+  regime dynamics later.
+* **Impact on outputs.** None — design only.
+* **Backward-compatible.** Yes (design only).
