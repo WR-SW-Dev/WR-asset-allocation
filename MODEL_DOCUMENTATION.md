@@ -1066,7 +1066,35 @@ The original Phase 3c text follows for audit-trail purposes:
   absolute dollar guardrails; switching to an absolute-dollar guardrail
   is a real-world refinement but doesn't qualify as Phase 3c minimum.
 
-### L14 — Only linear transaction cost is modeled
+### L14 — Only linear transaction cost is modeled — [PARTIALLY RESOLVED 2026-05-02, Phase 10]
+
+> **Status: PARTIALLY RESOLVED in Phase 10.** Resolution is
+> engine-conditional and scope-conditional:
+>
+> * **PE-secondary mispricing concern**: closed by L8 (Phase 8). PE
+>   buckets are non-tradable in rebalance under default config; no
+>   ``transaction_cost`` row attributable to PE rebalance can exist.
+>   PE secondaries, if and when modelled, will land under a new
+>   flow type with their own cost regime.
+> * **Public-market linear-bps approximation**: documented as
+>   appropriate for the modelled scale (trades < ~5% of NAV per
+>   quarter; market depth assumption that bps-linear covers slippage
+>   + commission). New ``## Transaction cost summary`` report
+>   section flags when run-time data crosses scale thresholds where
+>   the linear approximation may underprice market impact.
+>   **Thresholds are diagnostic heuristics, not validation
+>   failures. Crossing them does not invalidate the run; it flags
+>   interpretation risk.** A run that breaches a threshold still
+>   validates, still passes invariants, still produces a usable
+>   ledger.
+> * **Asymmetric buy/sell, per-bucket bps, fee economics, liquidity
+>   haircuts**: explicitly out of scope for L14 resolution. Each is
+>   a separate future phase with its own design and tests.
+>
+> The original Phase 3b text follows for audit-trail purposes. The
+> "Pairing with L8" note at the bottom is updated: L8 closure
+> (Phase 8) resolved the specific concern about PE rebalancing
+> producing fictional bps cost — that surface no longer exists.
 
 * **Model behavior.** `cost_usd = (bps_per_trade / 1e4) · ∑ |trade|`.
   No quadratic term (market impact ∝ |trade|^1.5 or volume-relative),
@@ -1081,12 +1109,15 @@ The original Phase 3c text follows for audit-trail purposes:
   bps. The exit-gate test
   (`test_cvxportfolio_engine_preserves_invariants_under_nonzero_bps`)
   asserts *invariant preservation*, not *cost realism*.
-* **Pairing.** Tightly coupled to **L8** (rebalancer treats PE as a
-  liquid sleeve). Fixing L14 alone — adding per-bucket bps with PE
-  at 1500 bps — would surface the L8 fiction (rebalancer freely
-  selling PE) as a 15% drag every quarter; that's worse than the
-  current uniform-bps regime. L8 and L14 must move together: a real
-  PE-aware rebalance gate first, then per-bucket cost rates.
+* **Pairing.** Originally tightly coupled to **L8** (rebalancer
+  treats PE as a liquid sleeve). **L8 closure in Phase 8 resolved
+  this pairing**: PE no longer trades through rebalance, so the
+  "uniform bps prices PE secondaries as if they were public equity"
+  fiction has no surface to manifest. The Phase 10 advisory section
+  surfaces the residual public-market linear-bps approximation as a
+  diagnostic, not a gate. Future per-bucket bps / asymmetric / quadratic
+  cost work is a clean independent phase — no longer paired against
+  L8.
 
 ---
 
@@ -5112,3 +5143,79 @@ what changed, why, impact on outputs, backward-compatibility flag.
   with ``cvxportfolio`` + non-zero bps gain the new section; the
   ledger / manifest are byte-identical.
 * **Backward-compatible.** Yes (design only).
+
+### 2026-05-02 — Phase 10 implementation: L14 transaction cost diagnostics
+
+* **What.** Implements the §Phase 10 design locked one commit prior.
+  Documentation + light diagnostics; no math change, no schema
+  change, no config knob. Two surfaces:
+  1. **Report** (`integration/report.py`). New ``## Transaction
+     cost summary`` section, rendered after the existing "Cost-aware
+     allocator calibration (advisory)" section, gated on
+     ``transaction_cost`` rows existing in the ledger. Four metrics
+     (cumulative ``transaction_cost``, cumulative as % of initial
+     NAV, liquid rebalance turnover total + per-quarter mean, max
+     single-quarter liquid turnover as % of NAV) plus a 3-message
+     priority advisory plus the load-bearing tightening note
+     (``"diagnostic heuristics, not validation failures"``).
+     Liquid set is determined from ``cma.liquidity``; under L8
+     overlay-on the illiquid buckets contribute zero turnover by
+     construction, but the diagnostic excludes them by definition
+     to make the L14 / L8 boundary visible. Threshold constants
+     (``_TX_COST_HEURISTIC_PCT_OF_INITIAL_NAV = 0.01``;
+     ``_TX_QUARTERLY_LIQUID_TURNOVER_HEURISTIC_PCT = 0.25``) live
+     at module level with documenting comments.
+  2. **L14 entry flip** (`MODEL_DOCUMENTATION.md`). Marked
+     ``[PARTIALLY RESOLVED 2026-05-02, Phase 10]`` with engine-
+     conditional + scope-conditional wording. PE-secondary concern
+     closed by L8 (Phase 8); public-market linear-bps documented
+     as scale-appropriate; richer cost regimes explicitly deferred.
+     Original Phase 3b text retained for audit trail.
+* **Required tightening** (per audit, locked verbatim into both
+  doc and report):
+  > The advisory thresholds are diagnostic heuristics, not
+  > validation failures. Crossing them does not invalidate the
+  > run; it flags interpretation risk.
+  Verified by ``test_section_renders_under_cvxportfolio_with_bps``
+  which asserts the verbatim phrase is present in the rendered
+  ``report.md``.
+* **Tests added (5)** in ``tests/test_transaction_cost_summary.py``:
+  - ``test_section_omitted_under_stub_engine`` — default fixture
+    runs at ``implementation.engine="stub"``; no
+    ``transaction_cost`` rows exist; section is omitted.
+  - ``test_section_renders_under_cvxportfolio_with_bps`` —
+    ``cvxportfolio`` + 5 bps produces the section with all four
+    metrics + an advisory + the verbatim
+    "diagnostic heuristics, not validation failures" tightening.
+  - ``test_all_clear_advisory_at_low_turnover`` — default fixture
+    + cvxportfolio + 5 bps stays under both thresholds → advisory
+    says "covers this regime."
+  - ``test_high_turnover_triggers_market_impact_advisory`` —
+    constructed config with policy weights diverging sharply from
+    fixture initial NAV (cash 0.40 / bond 0.10 / equity 0.25 /
+    pe_buyout 0.25 vs. initial 15/20/65/0%) forces > 25% max
+    single-quarter liquid turnover → advisory contains
+    "may underprice market impact."
+  - ``test_transaction_cost_row_schema_unchanged`` — Phase 10
+    adds no columns to the ledger; ``transaction_cost`` rows still
+    match the Phase 3b schema (``bucket=cash``, ``amount_usd ≤ 0``,
+    ``source="impl:cvxportfolio"``).
+* **L14 status.** Flipped to
+  ``[PARTIALLY RESOLVED 2026-05-02, Phase 10]``. The original
+  L8-pairing note is updated: L8 closure (Phase 8) resolved the
+  specific concern about PE rebalancing producing fictional bps
+  cost; future per-bucket / asymmetric / quadratic cost work is a
+  clean independent phase, no longer paired against L8.
+* **Impact on outputs.** **Zero on shipped configs.** Default
+  fixture runs at ``implementation.engine="stub"`` with
+  ``bps_per_trade=0``; ``transaction_cost`` rows do not exist;
+  the new section is gated off; ``ledger.parquet`` and
+  ``manifest.json`` byte-identical to pre-Phase-10. Runs with
+  ``cvxportfolio`` + non-zero bps gain the new ``## Transaction
+  cost summary`` section; the ledger and manifest are unchanged.
+* **216 tests pass** (was 211). 5 new; zero regressions; zero
+  re-anchored.
+* **Backward-compatible.** Yes. The schema is unchanged; the
+  threshold constants are renderer-internal (no config knob); the
+  advisory text is informational. No breaking changes for any
+  consumer.

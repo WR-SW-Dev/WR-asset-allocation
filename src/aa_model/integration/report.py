@@ -25,6 +25,15 @@ if TYPE_CHECKING:
     from aa_model.assumptions.correlation_shock import CorrelationShockDiagnostics
 
 
+# Phase 10 / L14 advisory thresholds. **Diagnostic heuristics, not
+# validation gates.** Crossing them does not invalidate the run; it
+# flags interpretation risk. The values are documented round-number
+# heuristics, not derived from any specific market study. See
+# MODEL_DOCUMENTATION.md §Phase 10 design.
+_TX_COST_HEURISTIC_PCT_OF_INITIAL_NAV: float = 0.01   # 1% cumulative
+_TX_QUARTERLY_LIQUID_TURNOVER_HEURISTIC_PCT: float = 0.25   # 25% per quarter
+
+
 def write_markdown_report(
     path: Path,
     *,
@@ -539,6 +548,125 @@ def write_markdown_report(
                         "policy-tracking vs trade-cost suppression)"
                     )
             lines.append("")
+
+    # Transaction cost summary (Phase 10 / L14). Renders only when
+    # transaction_cost rows exist (non-stub implementation engine with
+    # bps_per_trade > 0). Surfaces four metrics + a 3-message priority
+    # advisory line + the load-bearing "diagnostic heuristics, not
+    # validation failures" note. No math change; no schema change; no
+    # config knob.
+    full_df = ledger.finalize()
+    tx_rows = full_df[full_df["flow_type"] == "transaction_cost"]
+    if not tx_rows.empty:
+        cum_tx = float(-tx_rows["amount_usd"].sum())  # tx amounts are negative
+
+        # Liquid bucket set from cma.liquidity. Phase 8 cross-config
+        # validator guarantees this is well-formed when the L8 overlay
+        # is on; under overlay-off (regression mode), some liquidity
+        # tags may be missing — fall back to "all non-pe_*" buckets in
+        # that case so the diagnostic still surfaces.
+        if cma is not None and not cma.liquidity.empty:
+            liquid_buckets = {
+                str(b)
+                for b, tag in cma.liquidity.items()
+                if str(tag) in ("liquid", "semi_liquid")
+            }
+        else:
+            liquid_buckets = {
+                b for b in full_df["bucket"].unique() if not str(b).startswith("pe_")
+            }
+
+        rb = full_df[full_df["flow_type"] == "rebalance"].copy()
+        if not rb.empty:
+            rb_liquid = rb[rb["bucket"].isin(liquid_buckets)].copy()
+        else:
+            rb_liquid = rb
+
+        # Liquid turnover totals: paired buy / sell rows sum to zero per
+        # quarter, so the one-side trade volume is sum(|trade|) / 2.
+        if not rb_liquid.empty:
+            total_liquid_turnover = float(
+                rb_liquid["amount_usd"].abs().sum() / 2.0
+            )
+            rb_liquid_per_q = (
+                rb_liquid.groupby("quarter")["amount_usd"]
+                .apply(lambda s: float(s.abs().sum() / 2.0))
+            )
+        else:
+            total_liquid_turnover = 0.0
+            rb_liquid_per_q = pd.Series([], dtype=float)
+
+        n_quarters = (
+            int(full_df["quarter"].nunique()) if not full_df.empty else 0
+        )
+        mean_quarterly_liquid_turnover = (
+            total_liquid_turnover / n_quarters if n_quarters > 0 else 0.0
+        )
+
+        initial_total = sum(ledger.initial_nav.values()) if ledger.initial_nav else 0.0
+        cum_tx_pct = (
+            cum_tx / initial_total * 100.0 if initial_total > 0 else 0.0
+        )
+        if not rb_liquid_per_q.empty and initial_total > 0:
+            max_q_turnover_pct = float(rb_liquid_per_q.max() / initial_total * 100.0)
+        else:
+            max_q_turnover_pct = 0.0
+
+        # Engine name + bps from the implementation config.
+        impl_engine = cfg.base.implementation.engine
+        impl_bps = float(cfg.base.implementation.bps_per_trade)
+
+        lines.append("## Transaction cost summary")
+        lines.append("")
+        lines.append(f"- engine: `{impl_engine}` @ {impl_bps:g} bps")
+        lines.append(f"- cumulative transaction_cost: ${cum_tx:,.0f}")
+        lines.append(f"- as % of initial NAV: {cum_tx_pct:.2f}%")
+        lines.append(
+            f"- liquid rebalance turnover (sum |trade|, liquid buckets): "
+            f"${total_liquid_turnover / 1e6:,.2f}M total, "
+            f"${mean_quarterly_liquid_turnover / 1e3:,.0f}K / quarter mean"
+        )
+        lines.append(
+            f"- max single-quarter liquid turnover as % of NAV: "
+            f"{max_q_turnover_pct:.2f}%"
+        )
+
+        # Three-message advisory, priority order:
+        #   1. max quarterly turnover > 25% wins
+        #   2. cumulative cost > 1% of initial NAV
+        #   3. otherwise, all-clear
+        if (
+            max_q_turnover_pct
+            > _TX_QUARTERLY_LIQUID_TURNOVER_HEURISTIC_PCT * 100.0
+        ):
+            lines.append(
+                f"- advisory: ⚠️ max quarterly liquid turnover > "
+                f"{_TX_QUARTERLY_LIQUID_TURNOVER_HEURISTIC_PCT * 100:.0f}% of NAV "
+                "— linear-bps approximation may underprice market impact at "
+                "this trade size."
+            )
+        elif cum_tx_pct > _TX_COST_HEURISTIC_PCT_OF_INITIAL_NAV * 100.0:
+            lines.append(
+                f"- advisory: ⚠️ cumulative cost > "
+                f"{_TX_COST_HEURISTIC_PCT_OF_INITIAL_NAV * 100:.0f}% of initial NAV "
+                "— cost is material; consider per-bucket bps or a richer cost "
+                "model for stress runs."
+            )
+        else:
+            lines.append(
+                "- advisory: linear-bps approximation covers this regime "
+                "(turnover and cost both within typical scale)."
+            )
+        lines.append("")
+        lines.append(
+            "_These thresholds are diagnostic heuristics, not validation "
+            "failures. Crossing them does not invalidate the run; it flags "
+            "interpretation risk. PE-secondary / asymmetric / "
+            "quadratic-impact / fee-economics costs are out of scope for "
+            "the linear bps model. See MODEL_DOCUMENTATION.md §Phase 10 "
+            "/ L14._"
+        )
+        lines.append("")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines), encoding="utf-8")
