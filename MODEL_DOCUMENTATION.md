@@ -9839,3 +9839,504 @@ future spending- and liquidity-related modeling work.
   (local manifest authored + clean reconciliation pass) but do
   not on their own complete it. ``row_classification_rules``
   remain a human-authored input.
+
+---
+
+## Phase 15 design (pre-implementation) — Investment Summary / Account-Position ingestion
+
+### Motivation
+
+Phase 14 gave the model cash-flow rows from the workbook. Phase 15 gives it
+the **position universe** — what the family owns, where it is held, how liquid
+it is, and what contractual terms attach. Without this layer, the
+``liquid_nav`` spending base is a config assertion, not a derived fact.
+
+**Standing principle addressed:**
+
+```
+NAV is not liquidity.
+Appraisal value is not spending capacity.
+OpCo value is not automatically distributable capital.
+Development and land assets require separate capital-need
+and monetization assumptions.
+```
+
+**L-status:**
+
+* L2 (Monte Carlo): still deferred; Phase 15 is a direct prerequisite.
+* L19: unchanged; workbook classification continues independently.
+* L20 opened: liquidity coverage ratio (liquid NAV / spending base) cannot
+  be computed until position-level liquidity tagging exists. Gate held open
+  until Phase 15 ingestion + Phase 12 spending-base integration complete.
+
+**Second canonical data source:**
+
+```
+Investment Summary for Categorization March 2026.xlsx
+```
+
+Never committed, never mutated. Same privacy discipline as Phase 14.
+
+---
+
+### Read-only ingestion contract
+
+* ``openpyxl(read_only=True, data_only=True, keep_links=False)`` — same
+  call contract as Phase 14.
+* SHA-256 hash stored in ``PositionIngestionDiagnostics`` for provenance.
+* No live values, manager names, fund names, or position names in committed
+  artifacts or chat.
+* Synthetic fixtures only in tests.
+* Local-private manifest: ``configs/investment_summary_manifest_local.yaml``
+  (gitignored).
+* Local-private exports: ``data/external/`` (gitignored).
+
+---
+
+### New schema: record types
+
+#### ``AccountRecord``
+
+One row per custodial / institutional account.
+
+```
+account_id      str   URL-safe, required. Human-assigned in manifest.
+                      Flat sheets synthesize: "synthetic:<sheet_id>"
+entity_id       str   FK → EntitySheetSpec.entity_id (Phase 14)
+custodian       str   Institution holding the account (display-only)
+account_type    Literal["taxable","tax_deferred","tax_exempt",
+                        "trust","partnership","direct"]
+valuation_date  date  As-of date for positions in this account
+source_sheet    str   Sheet name (local-private only)
+```
+
+**Tightening T1:** Normalized output always has ``AccountRecord``. When
+the workbook is flat (no explicit account grouping), the ingestor
+synthesizes ``account_id = "synthetic:<sheet_id>"`` and
+``account_type = "direct"``. Consumer always sees a uniform
+account → position hierarchy.
+
+#### ``PositionRecord``
+
+One row per position.
+
+```
+position_id               str          f"{account_id}__{row_index}"
+account_id                str          FK → AccountRecord
+manager_id                str | None   FK → ManagerTermsRecord
+asset_class               _ASSET_CLASS_LITERAL
+strategy                  str | None
+market_value_usd          float        >= 0; manager-reported NAV
+cost_basis_usd            float | None
+unfunded_commitment_usd   float | None >= 0
+income_cash_flow_flag     bool         human-authored; True links to
+                                       distribution_inflow producer
+liquidity_bucket          _LIQUIDITY_BUCKET_LITERAL
+time_horizon_quarters     int | None
+valuation_date            date         required after fallback (T2)
+source_row                int          1-indexed; no label content
+```
+
+``market_value_usd >= 0`` always. Positions are stocks of value, not
+flows; sign convention differs from ``CashFlowLineRecord``.
+
+**Tightening T2 — valuation date fallback + stale diagnostics:**
+``PositionRecord.valuation_date`` is required. Resolution order:
+
+```
+position row cell
+→ AccountSheetSpec.valuation_date
+→ PositionManifestConfig.as_of_date
+```
+
+Diagnostics added:
+
+```
+positions_with_fallback_valuation_date   int
+stale_valuation_count                    int  (> 90 days before as_of_date)
+max_valuation_age_days                   int
+```
+
+Private market NAVs are often one or two quarters stale; this surfaces
+without hiding it.
+
+#### ``ManagerTermsRecord``
+
+Fund / manager contractual terms. Human-authored in manifest; never
+auto-inferred by the scraper.
+
+```
+manager_id               str   URL-safe, required
+redemption_frequency     Literal["daily","monthly","quarterly",
+                                 "semi_annual","annual","none"]
+notice_days              int | None
+gate_pct                 float | None   0.0–1.0
+side_pocket              bool           default False
+lockup_end_date          date | None
+capital_call_notice_days int | None
+distribution_policy      Literal["discretionary","mandatory",
+                                 "reinvest","unknown"]
+management_fee_bps       int | None
+carry_pct                float | None   0.0–1.0
+hurdle_rate              float | None   0.0–1.0 (preferred return)
+fee_basis                Literal["committed","invested","nav","unknown"]
+source_document          str | None
+confidence               Literal["actual","contractual",
+                                 "estimated","unknown"]
+```
+
+**Tightening T5 — confidence/completeness validation:**
+``confidence="unknown"`` allows all fields ``None`` (placeholder).
+
+When ``confidence in {"actual","contractual","estimated"}``, validation
+requires at minimum:
+
+```
+redemption_frequency           required
+fee_basis or management_fee_bps   at least one required
+source_document or source_reference   at least one required
+```
+
+When the linked position's ``liquidity_bucket`` is ``"semi_liquid"`` or
+``"illiquid"`` and ``confidence != "unknown"``, also requires:
+
+```
+notice_days is not None
+OR lockup_end_date is not None
+OR redemption_frequency == "none"
+```
+
+Rationale: a fund with ``confidence="contractual"`` but no redemption
+terms is either missing its source document or miscategorized. The
+validation surfaces the gap rather than accepting silent incompleteness.
+
+---
+
+### Liquidity taxonomy
+
+``liquidity_bucket`` is a **schema-level enum** — not config-configurable —
+because the model's spending-base and coverage logic depends on stable
+bucket semantics.
+
+```python
+_LIQUIDITY_BUCKET_LITERAL = Literal[
+    "cash_equivalent",    # money market, T-bills, bank sweep — T+0/T+1
+    "daily_liquid",       # public equity/ETF/IG bond, T+2 settlement
+    "semi_liquid",        # quarterly/annual redemption with notice; HFs
+    "illiquid",           # PE/PC/RE funds, lockup > 1yr, no redemption
+    "locked_strategic",   # no near-term exit path; early-vintage PE
+    "re_stabilized",      # income-producing RE, monetize ~12–24 mo
+    "re_development",     # development stage, monetize 2–4 yr
+    "re_land",            # raw land, monetize 3+ yr
+    "opco_strategic",     # operating company strategic hold
+]
+
+_ASSET_CLASS_LITERAL = Literal[
+    "public_equity", "fixed_income_public", "cash_equivalent",
+    "hedge_fund", "private_equity", "private_credit",
+    "real_estate_equity", "real_estate_debt",
+    "infrastructure", "commodity", "direct_operating", "other",
+]
+```
+
+**Tightening T3 — explicit Phase 15 → Phase 12 liquidity tier mapping:**
+Phase 15 bucket taxonomy is preserved. A deterministic, configurable
+mapping layer bridges to Phase 12 spending-base tiers.
+
+| Phase 15 ``liquidity_bucket`` | Phase 12 tier (default) | Configurable? |
+|---|---|---|
+| ``cash_equivalent`` | ``liquid`` | no |
+| ``daily_liquid`` | ``liquid`` | no |
+| ``semi_liquid`` | ``semi_liquid`` | no |
+| ``illiquid`` | ``illiquid`` | no |
+| ``locked_strategic`` | ``locked_strategic`` | no |
+| ``re_stabilized`` | ``illiquid`` | yes — can be ``locked_strategic`` |
+| ``re_development`` | ``locked_strategic`` | no |
+| ``re_land`` | ``locked_strategic`` | no |
+| ``opco_strategic`` | ``locked_strategic`` | no |
+
+Override via ``PositionManifestConfig.liquidity_tier_overrides:
+dict[str,str] | None``. Defaults applied when field absent. Report
+emits the effective mapping so it is always visible.
+``re_stabilized`` income-producing status never silently upgrades to
+``liquid``.
+
+---
+
+### ``income_cash_flow_flag`` authority (Tightening T4)
+
+Human-authored only. Discovery may propose candidates in
+``local_private`` mode (e.g., a column named "distribution" with
+non-zero values is flagged as a candidate in the draft YAML with a
+``# PROPOSED — confirm before use`` comment). The manifest field is
+the authority. Ingestion reads only the manifest value.
+
+Posture mirrors Phase 14's ``distributable_candidate``.
+
+---
+
+### ``position_terms_status`` diagnostics (reviewer addition)
+
+Each ``ManagerTermsRecord`` is classified:
+
+| Status | Condition |
+|---|---|
+| ``complete_terms`` | All required fields populated for given confidence level |
+| ``partial_terms`` | Some required fields missing for given confidence level |
+| ``missing_terms`` | Position has no ``manager_id`` linkage |
+| ``unknown_confidence`` | ``confidence="unknown"`` regardless of field population |
+
+Emitted as ``position_terms_status: dict[str,int]`` in
+``PositionIngestionDiagnostics``. Positions with ``missing_terms`` or
+``partial_terms`` listed by ``position_id`` in
+``positions_with_incomplete_terms: list[str]``.
+
+---
+
+### Manifest schema: ``PositionManifestConfig``
+
+```
+PositionManifestConfig:
+    manifest_version         str   URL-safe, required
+    workbook_version         str   URL-safe, required
+    expected_filename        str
+    as_of_date               date  manifest-level valuation date fallback
+    accounts                 list[AccountSheetSpec]
+    manager_terms            list[ManagerTermsRecord]
+    liquidity_tier_overrides dict[str,str] | None   Phase15→Phase12 mapping
+
+AccountSheetSpec:
+    account_id               str   URL-safe; or "synthetic:<sheet_id>"
+    entity_id                str   FK → EntitySheetSpec.entity_id
+    sheet_name               str   local-private only
+    layout_type              Literal["flat_position","account_position",
+                                     "display_only"]
+    header_row_index         int | None
+    value_column_index       int   market_value_usd column
+    name_column_index        int   asset name column (label export)
+    position_column_mappings dict[str,int]   field → column index
+    valuation_date           date | None   fallback before manifest as_of_date
+```
+
+---
+
+### Discovery layer
+
+Same two-stage pattern as Phase 14.2.
+
+**Stage 1 — ``discover_investment_summary(path)``**
+
+Read-only structural scan:
+
+* Detect header rows (scan rows 1–10).
+* Detect candidate columns by header text (value, cost, commitment,
+  manager, asset-class keywords).
+* Classify sheets by role: ``account_sheet``, ``aggregate_summary``,
+  ``display_only``.
+* Detect valuation date from header or sheet name.
+* Returns ``InvestmentSummaryDiscoveryResult``.
+
+**Stage 2 — ``build_draft_position_manifest(discovery, *, mode)``**
+
+* ``privacy_safe`` — redacts person/fund identifiers; structural scaffold
+  only.
+* ``local_private`` — full names preserved; path-safety: refuses
+  non-``_local.yaml`` outputs.
+* ``column_mappings`` left as ``<TODO>`` — human confirms field → column.
+* ``manager_terms`` left empty — human-authored entirely.
+* ``income_cash_flow_flag`` proposals marked
+  ``# PROPOSED — confirm before use`` (T4).
+
+**CLI:**
+
+```
+python -m aa_model.ingestion.discover_investment_summary \
+    --workbook PATH \
+    --mode {privacy_safe,local_private} \
+    [--out PATH] \
+    [--dry-run]
+```
+
+---
+
+### Ingestion entry point
+
+```python
+ingest_investment_summary(
+    workbook_path: Path,
+    manifest: PositionManifestConfig,
+    *,
+    manifest_version: str,
+) -> PositionIngestionResult
+```
+
+```
+PositionIngestionResult:
+    accounts:    list[AccountRecord]
+    positions:   list[PositionRecord]
+    diagnostics: PositionIngestionDiagnostics
+
+PositionIngestionDiagnostics:
+    workbook_hash                          str
+    workbook_version                       str
+    manifest_version                       str
+    formula_cache_caveat                   str   standing CAVEAT (Phase 14 RT1)
+    positions_total                        int
+    positions_by_bucket                    dict[str,int]
+    positions_by_asset_class               dict[str,int]
+    positions_missing_bucket               int
+    positions_missing_manager              int
+    unfunded_total_usd                     float
+    manager_terms_coverage                 dict[str,str]
+    positions_with_incomplete_terms        list[str]   position_id only
+    position_terms_status                  dict[str,int]
+    positions_with_fallback_valuation_date int
+    stale_valuation_count                  int
+    max_valuation_age_days                 int
+    unmatched_rows                         list[int]   row positions only
+```
+
+---
+
+### What must NOT be inferred
+
+| Inference | Why not |
+|---|---|
+| Legal liquidity beyond documented terms | A quarterly fund may be gated or side-pocketed |
+| Tax lot treatment or embedded gain | Not present in position labels |
+| Whether OpCo / RE appraisal is spendable | Appraisal is not liquidity — standing principle |
+| Whether manager-reported NAV is immediately accessible | Gate / notice / side-pocket status must be human-authored |
+| Actual redemption availability | Only documented terms assertable; actuals depend on fund conditions |
+| ``income_cash_flow_flag`` from asset name | Human-authored in manifest (T4) |
+| ``manager_id`` assignment from position name | Human-authored in manifest |
+
+---
+
+### Integration with existing model layers
+
+| Existing layer | Phase 15 connection |
+|---|---|
+| ``CMAConfig.liquidity`` (Phase 12) | ``liquid_nav`` eventually derived from PositionRecord sums by bucket (T3 mapping); currently still config-asserted until integration phase |
+| ``spending_base`` (Phase 12) | Phase 15 enables computing ``liquid_nav`` as derived fact |
+| ``distribution_inflow`` producer (Phase 12.5–14) | ``income_cash_flow_flag=True`` positions link to cash-flow layer |
+| ``entity_id`` (Phase 14) | ``AccountRecord.entity_id`` FK ties positions to entity sheets |
+| PE pacing (future) | Private equity ``PositionRecord`` rows feed pacing layer |
+| Liquidity coverage (L20, future) | ``sum(market_value_usd where Phase12 tier in {"liquid"}) / spending_base`` |
+| Monte Carlo (L2, deferred) | Requires honest NAV + liquidity + pacing — Phase 15 is prerequisite |
+
+---
+
+### Report section (advisory)
+
+```
+## Position universe (Phase 15, advisory)
+  workbook_hash:  ...
+  as_of_date:     ...
+  positions_total: N    accounts_total: N
+
+  NAV by liquidity bucket:
+    cash_equivalent:    $X      daily_liquid:       $X
+    semi_liquid:        $X      illiquid:           $X
+    locked_strategic:   $X      re_stabilized:      $X
+    re_development:     $X      re_land:            $X
+    opco_strategic:     $X
+
+  NAV by asset class:  [table]
+  Unfunded commitments: $X
+
+  Manager terms coverage:
+    complete_terms:     N       partial_terms:      N
+    missing_terms:      N       unknown_confidence: N
+
+  Stale valuations (> 90d): N    Max valuation age: D days
+  Positions missing bucket: N
+
+  CAVEAT: Formula-cache stale-state risk applies (Phase 14 RT1).
+  CAVEAT: market_value_usd reflects manager-reported NAV; legal
+          liquidity may differ due to gates, side pockets, lockups,
+          or notice periods not captured in ManagerTermsRecord.
+  CAVEAT: liquidity_bucket reflects human-authored classification;
+          economic or legal liquidity is not automatically inferred.
+```
+
+---
+
+### New files (implementation targets)
+
+```
+src/aa_model/ingestion/schemas_position.py
+    AccountRecord, PositionRecord, ManagerTermsRecord,
+    PositionManifestConfig, PositionIngestionDiagnostics,
+    AccountSheetSpec
+
+src/aa_model/ingestion/investment_summary.py
+    ingest_investment_summary()
+
+src/aa_model/ingestion/liquidity_mapping.py
+    Phase15→Phase12 bucket mapping + override resolution
+
+src/aa_model/ingestion/discovery_position.py
+    discover_investment_summary(), build_draft_position_manifest(),
+    InvestmentSummaryDiscoveryResult
+
+src/aa_model/ingestion/discover_investment_summary.py
+    CLI entry point
+
+configs/investment_summary_manifest.yaml
+    committed scaffold (privacy_safe, <TODO_*> placeholders)
+
+tests/test_phase15_position_ingestion.py
+    synthetic fixtures only
+```
+
+---
+
+### Test discipline
+
+* Synthetic workbook fixture only — no real workbook, no real position
+  or fund names.
+* ``PositionRecord`` validates ``liquidity_bucket`` enum; rejects
+  ``market_value_usd < 0``.
+* ``ManagerTermsRecord`` T5 completeness validation exercises all
+  three confidence levels + ``"unknown"`` placeholder path.
+* ``gate_pct`` and ``carry_pct`` reject values outside ``[0.0, 1.0]``.
+* Positions missing ``liquidity_bucket`` surface in diagnostics without
+  raising.
+* Stale-valuation count increments correctly in diagnostics.
+* ``PositionManifestConfig.model_validate`` round-trips cleanly.
+* T3 mapping: default and override paths both tested.
+* Discovery dry-run emits no workbook content to stdout.
+* Default configs byte-stable across runs.
+
+---
+
+### Reviewer tightenings applied (five)
+
+1. Normalized output always has ``AccountRecord``; flat sheets
+   synthesize ``account_id = "synthetic:<sheet_id>"``,
+   ``account_type = "direct"``.
+2. ``PositionRecord.valuation_date`` required after fallback; stale
+   valuation diagnostics added.
+3. Phase 15 ``liquidity_bucket`` taxonomy kept; explicit mapping to
+   Phase 12 tiers via ``liquidity_tier_overrides``; ``re_stabilized``
+   never silently upgrades to ``liquid``.
+4. ``income_cash_flow_flag`` human-authored only; discovery proposes
+   candidates in ``local_private`` mode with ``# PROPOSED`` marker.
+5. ``ManagerTermsRecord`` confidence/completeness validation: partial
+   or missing required fields for non-``"unknown"`` confidence raises
+   at manifest validation time.
+
+---
+
+### Out of scope for Phase 15
+
+* No Monte Carlo (L2 deferred).
+* No automatic legal/tax interpretation.
+* No automatic redemption modeling.
+* No fee drag calculation.
+* No workbook mutation.
+* No real workbook committed.
+* No live values in docs or tests.
+* No L19 status change.
+* No Phase 12 ``liquid_nav`` re-wiring yet (integration phase follows
+  Phase 15 ingestion).
