@@ -10520,3 +10520,151 @@ tests/test_phase16_liquidity_coverage.py   (synthetic fixtures only)
 * No legal / tax interpretation.
 * No live workbook ingestion required.
 * L20 PARTIALLY RESOLVED on synthetic + config coverage.
+
+---
+
+## Phase 17 — StudyConfig integration (Phases 14–16 orchestration)
+
+**Status:** shipped.
+**L-label:** L20 (liquidity coverage orchestration).
+**Commit:** pending (this design-lock).
+
+---
+
+### Problem statement
+
+Phases 14–16 each shipped as isolated functional layers:
+Phase 14 ingests the cash-flow workbook, Phase 15 ingests the Investment
+Summary, Phase 16 computes liquidity coverage from position records.
+Phase 17 wires these layers together under ``StudyConfig`` so a single
+``run_orchestrator`` invocation can optionally run position ingestion
+and emit a liquidity coverage diagnostic alongside the existing
+spending-trajectory report.
+
+---
+
+### Reviewer answers and tightenings
+
+1. **Helper placement:** ``load_position_manifest(path)`` lives in
+   ``aa_model.ingestion.investment_summary`` (ingestion layer), not in the
+   orchestrator. The orchestrator imports it lazily at run time.
+
+2. **Path not inline:** ``PositionIngestionConfig.manifest_path`` is a
+   path string. The manifest is not embedded inline in ``StudyConfig``
+   (cf. ``WorkbookIngestionConfig.manifest`` which embeds the raw dict).
+   Separating path from data keeps the config YAML human-readable and
+   allows the manifest YAML to evolve independently.
+
+3. **Fail fast:** ``FileNotFoundError`` is raised at the top of the
+   position-ingestion block if either ``workbook_path`` or
+   ``manifest_path`` does not exist. No partial-result silencing.
+
+4. **Orchestration helper signature:**
+   ``_run_liquidity_coverage(position_result, position_manifest, cfg)``
+   threads:
+   * ``positions`` from ``position_result.positions``
+   * ``manager_terms`` from ``position_manifest.manager_terms``
+   * ``tier_overrides`` from ``position_manifest.liquidity_tier_overrides``
+   * ``liquidity_obligations`` from ``cfg.liquidity_obligations`` (raw dict
+     → ``LiquidityObligationConfig.model_validate``)
+   * ``liquidity_coverage_config`` from ``cfg.liquidity_coverage_config``
+     (raw dict → ``LiquidityCoverageConfig.model_validate``)
+   * ``spending_base_is_flow`` derived from
+     ``cfg.spending.guardrail.spending_base == "distributable_income"``
+
+5. **Explicit spending_base_mode:** ``render_coverage_report_section``
+   now accepts ``spending_base_mode: str | None`` explicitly (not inferred
+   from the result object). The orchestrator derives it from
+   ``cfg.spending.guardrail.spending_base`` and passes it through the
+   report layer.
+
+---
+
+### Architecture
+
+```
+StudyConfig
+  └─ position_ingestion: PositionIngestionConfig | None
+       ├─ workbook_path: str
+       └─ manifest_path: str   ← path to PositionManifestConfig YAML
+  └─ liquidity_obligations: dict | None   ← LiquidityObligationConfig raw
+  └─ liquidity_coverage_config: dict | None   ← LiquidityCoverageConfig raw
+
+run_orchestrator
+  └─ _build_ledger
+       └─ (after per-quarter loop)
+            ├─ load_position_manifest(manifest_path) → PositionManifestConfig
+            ├─ ingest_investment_summary(workbook_path, manifest) → PIR
+            └─ _run_liquidity_coverage(PIR, manifest, cfg) → LCR
+
+write_markdown_report
+  └─ position_ingestion_result → render_position_report_section
+  └─ liquidity_coverage_result → render_coverage_report_section(result, spending_base_mode)
+```
+
+**Default-off byte-stable:** ``cfg.position_ingestion = None`` ⇒ no
+position ingestion ⇒ ``position_ingestion_result = None`` ⇒
+``liquidity_coverage_result = None`` ⇒ no new sections in the report.
+All pre-Phase-17 trajectories remain byte-identical.
+
+**``SpendingBaseBreakdown`` integration deferred to Phase 18+:** The
+``_run_liquidity_coverage`` helper passes ``spending_base=None``. The
+``SpendingBaseBreakdown`` object lives inside the OwlRule per-quarter
+state and is not yet surfaced into a form the orchestrator can pass.
+This means ``liquid_to_spending_base`` and
+``liquid_nav_to_annual_income_estimate`` are ``None`` in the Phase 17
+orchestrator path; they are fully exercised in the Phase 16 synthetic
+tests.
+
+---
+
+### Key schemas and functions
+
+```
+src/aa_model/io/schemas.py
+    PositionIngestionConfig
+    StudyConfig.position_ingestion (PositionIngestionConfig | None)
+    StudyConfig.liquidity_obligations (dict | None)
+    StudyConfig.liquidity_coverage_config (dict | None)
+
+src/aa_model/ingestion/investment_summary.py
+    load_position_manifest(path) → PositionManifestConfig
+
+src/aa_model/liquidity/coverage.py
+    render_coverage_report_section(result, spending_base_mode: str | None)
+
+src/aa_model/integration/orchestrator.py
+    _run_liquidity_coverage(position_result, position_manifest, cfg)
+    _build_ledger (extended return tuple — adds PIR, LCR)
+    run_orchestrator (passes PIR + LCR to write_markdown_report)
+
+src/aa_model/integration/report.py
+    write_markdown_report (position_ingestion_result, liquidity_coverage_result params)
+    ## Position universe (Phase 15, advisory) section
+    ## Liquidity coverage (Phase 16, advisory) section
+
+tests/test_phase17_study_integration.py   (synthetic fixtures only)
+```
+
+---
+
+### Test discipline
+
+* Synthetic ``PositionRecord`` lists — no live workbook dependency.
+* ``PositionIngestionConfig`` schema validation (valid, missing field, colon).
+* ``StudyConfig.position_ingestion`` default-off verified.
+* ``load_position_manifest`` fail-fast on missing file; valid YAML round-trip.
+* ``_run_liquidity_coverage`` wiring verified end-to-end with synthetic data.
+* ``render_coverage_report_section`` spending_base_mode label tested (set and None).
+* 9 tests total. Full suite: 284 green (4 pre-existing cvxportfolio failures unrelated).
+
+---
+
+### Out of scope for Phase 17
+
+* No ``SpendingBaseBreakdown`` → ``LiquidityCoverageResult`` integration
+  (deferred to Phase 18+).
+* No Monte Carlo.
+* No PE pacing integration.
+* No semi-liquid redemption modeling.
+* No L19 / L20 full resolution.

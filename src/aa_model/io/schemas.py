@@ -1090,6 +1090,38 @@ class WorkbookIngestionConfig(BaseModel):
         return v
 
 
+# ---- position ingestion (Phase 17 / L20 study integration) ------------------
+
+
+class PositionIngestionConfig(BaseModel):
+    """Phase 17 — Investment Summary position ingestion wired into StudyConfig.
+
+    ``manifest_path`` points to a YAML file containing a
+    ``PositionManifestConfig``; loaded by ``load_position_manifest()`` at
+    orchestration time (reviewer tightening 2 — path not inline).
+    ``workbook_path`` is the Investment Summary workbook. Both paths are
+    validated at orchestration time; ``FileNotFoundError`` is raised for
+    missing files (reviewer tightening 3 — fail fast).
+
+    Default-off byte-stable: ``cfg.position_ingestion = None`` ⇒ no
+    position ingestion; Phases 13–16 trajectories byte-identical.
+    """
+
+    model_config = _STRICT
+    workbook_path: str = Field(min_length=1)
+    manifest_path: str = Field(min_length=1)
+    manifest_version: str = Field(default="1", min_length=1)
+
+    @field_validator("manifest_version")
+    @classmethod
+    def _manifest_version_url_safe(cls, v: str) -> str:
+        if ":" in v:
+            raise ValueError(
+                f"manifest_version must be URL-safe (no colons); got {v!r}"
+            )
+        return v
+
+
 # ---- top-level resolved view ------------------------------------------------
 
 
@@ -1112,6 +1144,17 @@ class StudyConfig(BaseModel):
     # "no workbook ingestion" — orchestrator skips ingestion entirely;
     # Phase 13 trajectories byte-identical.
     workbook_ingestion: WorkbookIngestionConfig | None = None
+    # Phase 17 / L20: position ingestion config. Default None means no
+    # position ingestion; liquidity coverage diagnostics not computed.
+    position_ingestion: PositionIngestionConfig | None = None
+    # Phase 17 / L20: near-term obligation inputs for liquidity coverage.
+    # Stored as raw dict; validated as LiquidityObligationConfig by the
+    # orchestrator at run time. Consumed only when position_ingestion is set.
+    liquidity_obligations: dict | None = None
+    # Phase 17 / L20: policy thresholds for coverage breach / warning.
+    # Stored as raw dict; validated as LiquidityCoverageConfig by the
+    # orchestrator at run time. Consumed only when position_ingestion is set.
+    liquidity_coverage_config: dict | None = None
 
     @model_validator(mode="after")
     def _phase12_spending_base_cross_config(self) -> StudyConfig:

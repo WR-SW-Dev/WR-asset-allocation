@@ -97,6 +97,8 @@ def run_orchestrator(
         spending_diagnostics,
         distribution_producer_diagnostics,
         workbook_ingestion_result,
+        position_ingestion_result,
+        liquidity_coverage_result,
     ) = _build_ledger(cfg, run_id)
     ledger.validate(expected_externals_by_quarter=expected_externals)
 
@@ -123,6 +125,8 @@ def run_orchestrator(
             spending_diagnostics=spending_diagnostics,
             distribution_producer_diagnostics=distribution_producer_diagnostics,
             workbook_ingestion_result=workbook_ingestion_result,
+            position_ingestion_result=position_ingestion_result,
+            liquidity_coverage_result=liquidity_coverage_result,
         )
         outputs.append("report.md")
         outputs.append("manifest.json")
@@ -158,8 +162,10 @@ def _build_ledger(
     list[tuple[str, LiquidityOverlayDiagnostics]],
     dict | None,
     DistributionProducerDiagnostics | None,
-    object | None,  # IngestionResult | None — typed loosely to keep
+    object | None,  # WorkbookIngestionResult | None — typed loosely to keep
                     # io/schemas clean of an ingestion dependency.
+    object | None,  # PositionIngestionResult | None
+    object | None,  # LiquidityCoverageResult | None
 ]:
     start_q = pd.Period(cfg.base.horizon.start_quarter, freq="Q-DEC")
     n_q = cfg.base.horizon.num_quarters
@@ -479,6 +485,41 @@ def _build_ledger(
     if callable(diag_method):
         spending_diagnostics = diag_method()
 
+    # Phase 17 / L20: position ingestion + liquidity coverage. Run after
+    # the per-quarter loop so spending_diagnostics is available (though
+    # SpendingBaseBreakdown integration is deferred to Phase 18+).
+    # Default-off: None values when position_ingestion is not configured.
+    position_ingestion_result = None
+    liquidity_coverage_result = None
+    if cfg.position_ingestion is not None:
+        from pathlib import Path as _Path
+
+        from aa_model.ingestion.investment_summary import (
+            ingest_investment_summary,
+            load_position_manifest,
+        )
+
+        manifest_path = _Path(cfg.position_ingestion.manifest_path)
+        workbook_path = _Path(cfg.position_ingestion.workbook_path)
+        # Tightening 3: fail fast if either path is missing.
+        if not manifest_path.exists():
+            raise FileNotFoundError(
+                f"Position manifest not found: {manifest_path.resolve()}"
+            )
+        if not workbook_path.exists():
+            raise FileNotFoundError(
+                f"Investment Summary workbook not found: {workbook_path.resolve()}"
+            )
+        position_manifest = load_position_manifest(manifest_path)
+        position_ingestion_result = ingest_investment_summary(
+            workbook_path,
+            position_manifest,
+            manifest_version=cfg.position_ingestion.manifest_version,
+        )
+        liquidity_coverage_result = _run_liquidity_coverage(
+            position_ingestion_result, position_manifest, cfg
+        )
+
     return (
         ledger,
         expected_externals,
@@ -488,6 +529,8 @@ def _build_ledger(
         spending_diagnostics,
         distribution_producer_diagnostics,
         workbook_ingestion_result,
+        position_ingestion_result,
+        liquidity_coverage_result,
     )
 
 
@@ -505,6 +548,59 @@ def _write_ledger_parquet(df: pd.DataFrame, path: Path) -> None:
         engine="pyarrow",
         index=False,
         compression=None,
+    )
+
+
+def _run_liquidity_coverage(
+    position_result: object,
+    position_manifest: object,
+    cfg: StudyConfig,
+) -> object:
+    """Phase 17 / L20 — orchestration helper for liquidity coverage.
+
+    Reviewer tightening 4: threads positions, manager_terms,
+    liquidity_tier_overrides, liquidity_obligations,
+    liquidity_coverage_config, and spending_base_is_flow into
+    ``compute_liquidity_coverage``.
+
+    ``spending_base=None``: ``SpendingBaseBreakdown`` integration from
+    the Owl rule run deferred to Phase 18+.
+    """
+    from aa_model.liquidity.coverage import (
+        LiquidityCoverageConfig,
+        LiquidityObligationConfig,
+        compute_liquidity_coverage,
+    )
+
+    # type narrowing — typed loosely at the call site to avoid circular imports
+    from aa_model.ingestion.schemas_position import PositionManifestConfig
+    from aa_model.ingestion.schemas_position import PositionIngestionResult as _PIR
+
+    pr = position_result  # type: ignore[assignment]
+    pm = position_manifest  # type: ignore[assignment]
+
+    obligations = LiquidityObligationConfig.model_validate(
+        cfg.liquidity_obligations or {}
+    )
+    coverage_cfg = LiquidityCoverageConfig.model_validate(
+        cfg.liquidity_coverage_config or {}
+    )
+    spending_base_is_flow = (
+        cfg.spending.rule == "owl"
+        and cfg.spending.guardrail is not None
+        and cfg.spending.guardrail.spending_base == "distributable_income"
+    )
+    diag = pr.diagnostics
+    return compute_liquidity_coverage(
+        pr.positions,
+        obligations,
+        tier_overrides=pm.liquidity_tier_overrides,
+        manager_terms=pm.manager_terms,
+        spending_base=None,
+        spending_base_is_flow=spending_base_is_flow,
+        stale_nav_count=diag.stale_valuation_count,
+        untagged_position_count=diag.positions_missing_bucket,
+        config=coverage_cfg,
     )
 
 

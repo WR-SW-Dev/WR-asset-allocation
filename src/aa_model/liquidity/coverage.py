@@ -455,8 +455,22 @@ def _build_diagnostics(
 # ---- report renderer -------------------------------------------------------
 
 
-def render_coverage_report_section(result: LiquidityCoverageResult) -> str:
-    """Render the ## Liquidity coverage (Phase 16, advisory) report section."""
+def render_coverage_report_section(
+    result: LiquidityCoverageResult,
+    spending_base_mode: str | None = None,
+) -> str:
+    """Render the ## Liquidity coverage (Phase 16, advisory) report section.
+
+    Parameters
+    ----------
+    result:
+        ``LiquidityCoverageResult`` from ``compute_liquidity_coverage``.
+    spending_base_mode:
+        Phase 17 reviewer tightening 5 — explicit parameter set by the
+        orchestrator from ``cfg.spending.guardrail.spending_base``.
+        Used to label the ``liquid_to_spending_base`` ratio line.
+        ``None`` renders the label as ``"liquid / spending_base"``.
+    """
 
     def _fmt_nav(v: float) -> str:
         return f"${v:>14,.0f}"
@@ -470,6 +484,12 @@ def render_coverage_report_section(result: LiquidityCoverageResult) -> str:
         if v is None:
             return "n/a"
         return f"{v:.1%}"
+
+    spending_base_label = (
+        f"liquid / spending_base ({spending_base_mode})"
+        if spending_base_mode is not None
+        else "liquid / spending_base"
+    )
 
     total = result.total_position_nav
     lines = [
@@ -487,7 +507,8 @@ def render_coverage_report_section(result: LiquidityCoverageResult) -> str:
         "",
         "  Coverage ratios:",
         f"    liquid / annual_spend:     {_fmt_ratio(result.liquid_to_annual_spend)}",
-        f"    liquid / spending_base:    {_fmt_ratio(result.liquid_to_spending_base)}",
+        f"    {spending_base_label}:".ljust(38)
+        + f"{_fmt_ratio(result.liquid_to_spending_base)}",
         f"    liquid / next12m_oblig:    {_fmt_ratio(result.liquid_to_next12m_obligations)}",
         f"    capital_call_coverage:     {_fmt_ratio(result.capital_call_coverage)}",
         f"    liquidity_runway:          "

@@ -24,6 +24,8 @@ if TYPE_CHECKING:
     from aa_model.assumptions.cma import CMA
     from aa_model.assumptions.correlation_shock import CorrelationShockDiagnostics
     from aa_model.ingestion.schemas import IngestionResult
+    from aa_model.ingestion.schemas_position import PositionIngestionResult
+    from aa_model.liquidity.coverage import LiquidityCoverageResult
     from aa_model.producers.distribution import DistributionProducerDiagnostics
 
 
@@ -51,6 +53,8 @@ def write_markdown_report(
     spending_diagnostics: dict | None = None,
     distribution_producer_diagnostics: DistributionProducerDiagnostics | None = None,
     workbook_ingestion_result: IngestionResult | None = None,
+    position_ingestion_result: PositionIngestionResult | None = None,
+    liquidity_coverage_result: LiquidityCoverageResult | None = None,
 ) -> None:
     end_nav = ledger.end_nav_by_quarter()
     initial_total = sum(ledger.initial_nav.values())
@@ -1147,6 +1151,37 @@ def write_markdown_report(
             "human classifications. Board-snapshot reconciliation "
             "deltas are advisory only (Phase 14 reviewer tightening "
             "3); they never block a run._"
+        )
+        lines.append("")
+
+    # Position universe (Phase 15 / L20 investment summary ingestion).
+    # Rendered when a position ingestion result was produced. Surfaces
+    # provenance (workbook hash, manifest version), bucket/asset-class
+    # counts, terms coverage, and stale-valuation advisory.
+    if position_ingestion_result is not None:
+        from aa_model.ingestion.investment_summary import render_position_report_section
+
+        lines.append(render_position_report_section(position_ingestion_result))
+        lines.append("")
+
+    # Liquidity coverage (Phase 16 / L20). Rendered when a coverage
+    # result was produced alongside a position ingestion result.
+    # spending_base_mode is derived from the study spending config so
+    # the label on liquid_to_spending_base reflects the active mode
+    # (reviewer tightening 5 — explicit parameter, not inferred).
+    if liquidity_coverage_result is not None:
+        from aa_model.liquidity.coverage import render_coverage_report_section
+
+        spending_base_mode: str | None = None
+        gr = cfg.spending.guardrail
+        if cfg.spending.rule == "owl" and gr is not None and gr.spending_base is not None:
+            spending_base_mode = gr.spending_base
+
+        lines.append(
+            render_coverage_report_section(
+                liquidity_coverage_result,
+                spending_base_mode=spending_base_mode,
+            )
         )
         lines.append("")
 

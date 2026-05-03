@@ -371,6 +371,25 @@ def _build_diagnostics(
     )
 
 
+def load_position_manifest(path: "Path | str") -> PositionManifestConfig:
+    """Load and validate a PositionManifestConfig from a YAML file.
+
+    Phase 17 / L20 reviewer tightening 1 (helper in ingestion layer, not
+    orchestrator) and tightening 3 (fail fast).
+
+    Raises:
+        FileNotFoundError: if the file does not exist.
+    """
+    import yaml
+
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"Position manifest not found: {p.resolve()}")
+    with p.open("r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f)
+    return PositionManifestConfig.model_validate(raw)
+
+
 def render_position_report_section(result: PositionIngestionResult) -> str:
     """Render the ## Position universe (Phase 15, advisory) report section."""
     from aa_model.ingestion.liquidity_mapping import build_effective_mapping
