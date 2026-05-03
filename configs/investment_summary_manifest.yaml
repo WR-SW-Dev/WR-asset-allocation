@@ -1,0 +1,106 @@
+# Investment Summary for Categorization — committed manifest SCAFFOLD.
+#
+# This file is a STRUCTURAL TEMPLATE, not a runnable manifest.
+# Sheet names and fund/manager identifiers that carry person-identifying
+# or fund-identifying information are replaced with <TODO_*> placeholders.
+# Privacy discipline: PROJECT_SCOPE.md §5.3 + Phase 15 RT — live values,
+# manager names, position names, and identifiers that decode to
+# family-internal holdings stay outside the repo.
+#
+# --------------------------------------------------------------------------
+# WORKFLOW — turn this scaffold into a runnable manifest:
+# --------------------------------------------------------------------------
+#  1. Copy this file:
+#         cp configs/investment_summary_manifest.yaml \
+#            configs/investment_summary_manifest_local.yaml
+#     The `_local.yaml` variant is gitignored (see .gitignore line 48).
+#  2. Run the discovery CLI to auto-populate account sheets:
+#         python -m aa_model.ingestion.discover_investment_summary \
+#             --workbook ".../Investment Summary for Categorization March 2026.xlsx" \
+#             --out configs/investment_summary_manifest_local.yaml \
+#             --mode local_private \
+#             --workbook-version v1
+#  3. Open `configs/investment_summary_manifest_local.yaml` and:
+#     a. Fill <TODO_entity_id> for each account with the matching entity_id
+#        from workbook_v7_manifest_local.yaml (Phase 14 entity alignment).
+#     b. Complete position_column_mappings: map field names to column indices.
+#     c. Set income_cash_flow_flag: true in position_column_mappings only
+#        for positions where the family-office SFO layer actually receives
+#        distributable income from this position. Never auto-infer.
+#     d. Author manager_terms for each fund/manager you want modeled:
+#        set redemption_frequency, notice_days, lockup_end_date, fee_basis,
+#        and source_document. Use confidence="unknown" for placeholder records.
+#     e. Optionally override re_stabilized tier:
+#        liquidity_tier_overrides:
+#          re_stabilized: locked_strategic
+#  4. Validate locally:
+#        python -c "
+#          import yaml
+#          from aa_model.ingestion.schemas_position import PositionManifestConfig
+#          data = yaml.safe_load(open('configs/investment_summary_manifest_local.yaml'))
+#          m = PositionManifestConfig.model_validate(data)
+#          print('VALID:', m.manifest_version, len(m.accounts), 'accounts')
+#        "
+#  5. Run ingestion locally against the live workbook.
+#     Do NOT commit the local manifest or paste live values into chat.
+# --------------------------------------------------------------------------
+#
+# Liquidity bucket vocabulary (Phase 15):
+#   cash_equivalent | daily_liquid | semi_liquid | illiquid |
+#   locked_strategic | re_stabilized | re_development | re_land |
+#   opco_strategic
+#
+# Phase 15 → Phase 12 default tier mapping:
+#   cash_equivalent   → liquid
+#   daily_liquid      → liquid
+#   semi_liquid       → semi_liquid
+#   illiquid          → illiquid
+#   locked_strategic  → locked_strategic
+#   re_stabilized     → illiquid          (configurable via liquidity_tier_overrides)
+#   re_development    → locked_strategic
+#   re_land           → locked_strategic
+#   opco_strategic    → locked_strategic
+#
+# income_cash_flow_flag: HUMAN-AUTHORED ONLY. Do not infer from column
+# names or position labels. Set true only when this position produces
+# distributable income that flows to the SFO family-office layer.
+
+manifest_version: "1"
+workbook_version: "v1"
+expected_filename: "Investment Summary for Categorization March 2026.xlsx"
+as_of_date: "2026-03-31"
+
+accounts:
+  - account_id: "account_001"
+    entity_id: "<TODO_entity_id>"       # FK to Phase 14 entity_id
+    sheet_name: "<TODO_sheet_name>"     # replace with actual sheet name locally
+    layout_type: flat_position
+    header_row_index: null              # null = auto-detect; set 0-indexed int if known
+    value_column_index: 1               # 0-indexed column for market_value_usd
+    name_column_index: 0                # 0-indexed column for position name
+    position_column_mappings: {}        # <TODO: e.g. asset_class: 2, manager_id: 3>
+    valuation_date: null                # null = falls back to as_of_date above
+  # Add additional account sheets as needed.
+  # Run the discovery CLI to auto-populate from the live workbook.
+
+manager_terms: []
+# Example manager terms record:
+#   - manager_id: "mgr_example"
+#     redemption_frequency: quarterly
+#     notice_days: 65
+#     gate_pct: 0.25
+#     side_pocket: false
+#     lockup_end_date: null
+#     capital_call_notice_days: null
+#     distribution_policy: discretionary
+#     management_fee_bps: 150
+#     carry_pct: 0.20
+#     hurdle_rate: 0.08
+#     fee_basis: nav
+#     source_document: "LPA dated 2022-01-15"
+#     confidence: contractual
+
+liquidity_tier_overrides: null
+# Optional override example:
+#   liquidity_tier_overrides:
+#     re_stabilized: locked_strategic
