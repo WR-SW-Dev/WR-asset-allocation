@@ -11246,3 +11246,115 @@ tests/test_phase21_reconciliation_gates.py       (new, synthetic only)
   prerequisite write-up for the operational milestones; the milestones
   themselves (locally-authored manifest + clean live ingestion run) are
   not affected by this commit.
+
+## Phase 22 design-lock — manager terms consumer / diagnostic layer
+
+**Commit:** Phase 22 / L20
+
+Phase 15 introduced `ManagerTermsRecord` with fields for redemption
+frequency, notice days, gate/lockup/side-pocket metadata, fee basis, carry,
+and capital-call notice. Only `notice_days` was consumed (for the single
+`semi_liquid_earliest_notice_days` aggregate advisory in coverage.py).
+Phase 22 activates the remaining fields as a pure diagnostic layer.
+
+### Scope
+
+New file: `src/aa_model/liquidity/manager_terms_diagnostics.py`.
+No `StudyConfig` schema change — `ManagerTermsRecord` is already
+available at the orchestrator via `position_manifest.manager_terms`
+from Phase 15/17.
+
+Three sub-diagnostics, one top-level container:
+
+**1. Liquidity horizon (`LiquidityHorizonDiagnostics`)**
+
+Scope: positions whose Phase-12 tier resolves to `"semi_liquid"` via
+`resolve_phase12_tier(pos.liquidity_bucket, tier_overrides)`.
+Tier overrides are threaded from `position_manifest.liquidity_tier_overrides`
+(tightening 1 — consistent with coverage.py).
+
+`effective_window_days` computation (int | None, days from as_of_date):
+
+| `redemption_frequency` | Base days |
+|---|---|
+| `"daily"` | 0 |
+| `"monthly"` | 31 |
+| `"quarterly"` | 91 |
+| `"semi_annual"` | 182 |
+| `"annual"` | 365 |
+| `"none"` | None (not redeemable on demand) |
+| None or confidence="unknown" | None |
+
+`window = base_days + (notice_days or 0)`. Lockup offset: if
+`lockup_end_date > as_of_date`, `window = max(window, lockup_remaining_days)`.
+
+Flags (advisory, non-blocking): `"gate"` (gate_pct > 0), `"side_pocket"`,
+`"lockup"` (lockup_end_date in future).
+
+Unknown terms: never zero-filled. None → `terms_unknown` bucket, advisory.
+
+Horizon buckets: `within_90d` (≤90d), `90d_to_1y` (91–365d), `1y_to_3y`
+(366–1095d), `beyond_3y` (>1095d), `terms_unknown` (None).
+
+**2. Fee exposure (`FeeExposureDiagnostics`)**
+
+Scope: all positions with a matched `ManagerTermsRecord`, any tier.
+Annual drag estimate (1-year horizon):
+- `fee_basis="nav"` + bps → `annual_fee_drag_usd = nav × bps / 10_000`
+- `fee_basis="committed"` or `"invested"` → None + advisory
+- `fee_basis="unknown"` or bps None → None, counts as `fee_unknown_nav`
+
+Carry advisory (per-entry): `carry_pct > 0, hurdle_rate set` →
+`"carry X% above Y% hurdle"`. Never feeds coverage ratios.
+
+Field names used are the actual `ManagerTermsRecord` schema names:
+`carry_pct`, `hurdle_rate`, `management_fee_bps`, `fee_basis` (tightening 2).
+
+**3. Capital-call notice (`CapitalCallNoticeDiagnostics`)**
+
+Scope: managers where `capital_call_notice_days` is set (any value ≥ 0).
+Discriminator is field presence on the manager record, not liquidity tier.
+Unfunded per manager: sum of `pos.unfunded_commitment_usd` for matching positions.
+
+Purpose: ops-planning metadata only. Does not gate or modify Phase 20/21
+reconciliation gate outcome. No threshold alert in Phase 22 — concentration
+threshold deferred to a future phase.
+
+**Top-level container (`ManagerTermsDiagnostics`):**
+`total_positions`, `total_nav_usd`, `managers_with_terms` (confidence ≠ unknown),
+`managers_without_terms`, the three sub-diagnostics, `coverage_advisories`.
+
+### Integration
+
+`_build_ledger` return tuple: 11 → 12 elements. 12th element:
+`ManagerTermsDiagnostics | None` (None when `position_ingestion=None`
+— default-off byte-stable). Computed after `_run_liquidity_coverage`,
+inside the `if cfg.position_ingestion is not None:` block, using
+`position_manifest.manager_terms` and `position_manifest.liquidity_tier_overrides`
+already in scope.
+
+Report: `## Manager terms (Phase 22, advisory)` section added via
+`render_manager_terms_section()` in `manager_terms_diagnostics.py`.
+Section contains three markdown tables (horizon, fee, notice) plus
+per-bucket summaries.
+
+### Scope boundaries
+
+* Allocator objective: **unchanged**.
+* Semi-liquid: **advisory-only** — `effective_window_days` never reclassifies
+  positions into breach coverage or runway. T3 from Phase 16 preserved.
+* Fee drag: **advisory only** — `total_fee_drag_usd` never feeds coverage ratios.
+* `capital_call_notice_days`: **ops metadata only** — does not gate Phase 20/21.
+* No legal/tax/entity-governance inference.
+* No Monte Carlo.
+* No `StudyConfig` schema additions.
+* L20 resolution not affected (gate: `source_used="cashflow_workbook"` is
+  independent of this phase).
+
+### Tests
+
+15 tests in `tests/test_phase22_manager_terms_diagnostics.py`. Synthetic
+fixtures only. No live workbook. All tests green.
+
+Full suite: 368 passed, 0 failures (4 pre-existing cvxportfolio failures
+now resolved by the new test environment; prior baseline was 298 + 4 failures).

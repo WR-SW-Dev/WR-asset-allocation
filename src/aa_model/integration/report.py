@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from aa_model.ingestion.schemas import IngestionResult
     from aa_model.ingestion.schemas_position import PositionIngestionResult
     from aa_model.liquidity.coverage import LiquidityCoverageResult
+    from aa_model.liquidity.manager_terms_diagnostics import ManagerTermsDiagnostics
     from aa_model.pe.call_reconciliation import WorkbookCallReconciliationDiagnostics
     from aa_model.producers.distribution import DistributionProducerDiagnostics
 
@@ -57,6 +58,7 @@ def write_markdown_report(
     position_ingestion_result: PositionIngestionResult | None = None,
     liquidity_coverage_result: LiquidityCoverageResult | None = None,
     call_recon_diag: WorkbookCallReconciliationDiagnostics | None = None,
+    manager_terms_diag: ManagerTermsDiagnostics | None = None,
 ) -> None:
     end_nav = ledger.end_nav_by_quarter()
     initial_total = sum(ledger.initial_nav.values())
@@ -1193,6 +1195,14 @@ def write_markdown_report(
             "The worksheet is the operating forecast spine. "
             "T4: calls are never inferred from unfunded commitments × a percentage._"
         )
+        lines.append("")
+
+    # Manager terms (Phase 22 / L20). Rendered when manager terms diagnostics
+    # were produced alongside a position ingestion result.
+    if manager_terms_diag is not None:
+        from aa_model.liquidity.manager_terms_diagnostics import render_manager_terms_section
+
+        lines.append(render_manager_terms_section(manager_terms_diag))
         lines.append("")
 
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -100,6 +100,7 @@ def run_orchestrator(
         position_ingestion_result,
         liquidity_coverage_result,
         call_recon_diag,
+        manager_terms_diag,
     ) = _build_ledger(cfg, run_id)
     ledger.validate(expected_externals_by_quarter=expected_externals)
 
@@ -129,6 +130,7 @@ def run_orchestrator(
             position_ingestion_result=position_ingestion_result,
             liquidity_coverage_result=liquidity_coverage_result,
             call_recon_diag=call_recon_diag,
+            manager_terms_diag=manager_terms_diag,
         )
         outputs.append("report.md")
         outputs.append("manifest.json")
@@ -169,6 +171,7 @@ def _build_ledger(
     object | None,  # PositionIngestionResult | None
     object | None,  # LiquidityCoverageResult | None
     object | None,  # WorkbookCallReconciliationDiagnostics | None — Phase 20
+    object | None,  # ManagerTermsDiagnostics | None — Phase 22
 ]:
     start_q = pd.Period(cfg.base.horizon.start_quarter, freq="Q-DEC")
     n_q = cfg.base.horizon.num_quarters
@@ -488,6 +491,7 @@ def _build_ledger(
     position_ingestion_result = None
     liquidity_coverage_result = None
     call_recon_diag = None  # Phase 20
+    manager_terms_diag = None  # Phase 22
     if cfg.position_ingestion is not None:
         from pathlib import Path as _Path
 
@@ -579,6 +583,19 @@ def _build_ledger(
                 bridge_advisories
             )
 
+        # Phase 22 / L20: manager terms consumer layer. Pure diagnostic —
+        # does not affect coverage ratios, gates, or the allocator.
+        from aa_model.liquidity.manager_terms_diagnostics import (
+            compute_manager_terms_diagnostics,
+        )
+
+        manager_terms_diag = compute_manager_terms_diagnostics(
+            position_ingestion_result.positions,  # type: ignore[union-attr]
+            position_manifest.manager_terms,  # type: ignore[union-attr]
+            as_of_date=position_manifest.as_of_date,  # type: ignore[union-attr]
+            tier_overrides=position_manifest.liquidity_tier_overrides,  # type: ignore[union-attr]
+        )
+
     return (
         ledger,
         expected_externals,
@@ -591,6 +608,7 @@ def _build_ledger(
         position_ingestion_result,
         liquidity_coverage_result,
         call_recon_diag,  # Phase 20
+        manager_terms_diag,  # Phase 22
     )
 
 
