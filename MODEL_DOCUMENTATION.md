@@ -10340,3 +10340,183 @@ tests/test_phase15_position_ingestion.py
 * No L19 status change.
 * No Phase 12 ``liquid_nav`` re-wiring yet (integration phase follows
   Phase 15 ingestion).
+
+---
+
+## Phase 16 design (pre-implementation) — L20 liquidity coverage diagnostics
+
+### Motivation
+
+Phase 15 gave the model position-level ``liquidity_bucket`` tags. Phase 16
+turns those tags into coverage ratios — the first time the model can answer
+**"does the SFO have enough liquid resources to meet its obligations?"**
+from actual holdings rather than config assertions.
+
+**L20 gate:**
+
+* PARTIALLY RESOLVED when: coverage computed from synthetic / config
+  position data + spending base.
+* RESOLVED when: live ingested positions + validated ratios + human review.
+
+**Standing principles preserved:**
+
+```
+NAV is not liquidity.
+Appraisal value is not spending capacity.
+Semi-liquid availability depends on gates, notice periods, and fund
+conditions the model cannot assert.
+```
+
+---
+
+### Reviewer tightenings (six)
+
+1. ``LiquidityObligationConfig`` is standalone in Phase 16; not wired into
+   ``StudyConfig``. StudyConfig wiring deferred to a later orchestration phase.
+2. ``LiquidityCoverageConfig`` thresholds are configurable from the start.
+   Schema defaults match policy but may be overridden per study / IPS / board.
+3. Semi-liquid NAV is advisory-only. Not included in breach coverage,
+   liquidity runway, or next-12m obligation ratios. A future phase will
+   model notice-period access.
+4. ``next_12m_capital_calls_usd`` is never inferred from total unfunded
+   commitments. If total unfunded > 0 and next-12m calls are unknown, an
+   advisory is emitted.
+5. Distinct ``liquid_nav_to_annual_income_estimate`` metric for
+   ``distributable_income`` spending-base mode (stock-to-flow).
+   ``liquid_to_spending_base`` is ``None`` when the spending base is
+   flow-type to prevent stock/flow confusion.
+6. ``total_unfunded_commitments_usd`` captured in ``LiquidityCoverageResult``.
+
+---
+
+### Input schemas
+
+**``LiquidityObligationConfig``** — standalone (T1); not in StudyConfig:
+
+```
+annual_spend_usd              float | None   direct or from spending base
+next_12m_capital_calls_usd    float | None   T4: never inferred from unfunded
+next_12m_tax_obligations_usd  float | None   advisory input
+next_12m_entity_obligations_usd float | None advisory input
+note                          str | None
+```
+
+**``LiquidityCoverageConfig``** — thresholds (T2):
+
+```
+liquid_coverage_breach_threshold       float   default 1.0
+liquid_coverage_warning_threshold      float   default 2.0
+illiquid_concentration_warning_pct     float   default 0.60
+capital_call_coverage_warning_ratio    float   default 1.0
+missing_bucket_warning_threshold       int     default 1
+runway_horizon_quarters                int     default 8
+```
+
+---
+
+### Computed quantities
+
+NAV sums via Phase 15 → Phase 12 tier mapping
+(``liquidity_mapping.resolve_phase12_tier()``):
+
+```
+liquid_nav              tier == "liquid"
+semi_liquid_nav         tier == "semi_liquid"  (advisory only — T3)
+illiquid_nav            tier == "illiquid"
+locked_strategic_nav    tier == "locked_strategic"
+total_position_nav      sum of all
+total_unfunded_commitments_usd   sum of unfunded_commitment_usd (T6)
+```
+
+Coverage ratios (``float | None``; ``None`` when denominator unknown or zero):
+
+```
+liquid_to_annual_spend               liquid_nav / annual_spend_usd
+liquid_to_spending_base              liquid_nav / base_usd   (T5: None if flow-type)
+liquid_to_next12m_obligations        liquid_nav / next12m_total
+capital_call_coverage                liquid_nav / next_12m_capital_calls_usd
+liquid_fraction_of_nav               liquid_nav / total_position_nav
+illiquid_fraction_of_nav             (illiquid+locked) / total_position_nav
+liquidity_runway_quarters            floor(liquid_nav / quarterly_spend)  T3: liquid-only
+liquid_nav_to_annual_income_estimate liquid_nav / base_usd  (T5: flow-mode only)
+```
+
+---
+
+### Warning / breach taxonomy
+
+| Type | Condition | Class |
+|---|---|---|
+| Liquid below annual spend | ``liquid_to_annual_spend < 1.0`` | BREACH |
+| Liquid below 2× annual spend | ``< 2.0`` | WARNING |
+| Liquid below next-12m obligations | ``< 1.0`` | BREACH |
+| Capital call coverage < 1× | ``< 1.0`` | WARNING |
+| Illiquid concentration > 60% | ``> 0.60`` | WARNING |
+| Untagged positions | ``>= 1`` | WARNING |
+| Semi-liquid terms unknown | ``semi_liquid_nav_terms_unknown > 0`` | ADVISORY |
+| Stale NAV positions | ``stale_nav_count > 0`` | ADVISORY |
+| ``annual_spend_usd`` not provided | field is ``None`` | ADVISORY |
+| T4: unfunded without next-12m calls | unfunded > 0, calls = None | ADVISORY |
+
+---
+
+### Entry point
+
+```python
+compute_liquidity_coverage(
+    positions:             list[PositionRecord],
+    obligations:           LiquidityObligationConfig,
+    *,
+    tier_overrides:        dict[str,str] | None = None,
+    manager_terms:         list[ManagerTermsRecord] | None = None,
+    spending_base:         SpendingBaseBreakdown | None = None,
+    spending_base_is_flow: bool = False,
+    stale_nav_count:       int = 0,
+    untagged_position_count: int = 0,
+    config:                LiquidityCoverageConfig | None = None,
+) -> LiquidityCoverageResult
+```
+
+Pure function. No ledger reads. No side effects. Byte-stable.
+
+---
+
+### New files
+
+```
+src/aa_model/liquidity/__init__.py
+src/aa_model/liquidity/coverage.py
+    compute_liquidity_coverage()
+    LiquidityObligationConfig
+    LiquidityCoverageConfig
+    LiquidityCoverageResult
+    LiquidityCoverageDiagnostics
+
+tests/test_phase16_liquidity_coverage.py   (synthetic fixtures only)
+```
+
+---
+
+### Test discipline
+
+* Synthetic ``PositionRecord`` lists with known bucket distributions.
+* Coverage ratios computed from known inputs.
+* BREACH / WARNING threshold boundary tests.
+* Zero total NAV → ``None`` ratios; no ``ZeroDivisionError``.
+* Missing obligation inputs → advisory emitted, ratio ``None``.
+* T3, T4, T5, T6 tightening paths each tested.
+* Byte-stable: identical inputs → identical result.
+* 13 tests total. Full suite: 318 green.
+
+---
+
+### Out of scope for Phase 16
+
+* No ``StudyConfig`` wiring (deferred — T1).
+* No Monte Carlo.
+* No semi-liquid redemption modeling (deferred — T3).
+* No PE pacing / call schedule inference (deferred — T4).
+* No fee drag.
+* No legal / tax interpretation.
+* No live workbook ingestion required.
+* L20 PARTIALLY RESOLVED on synthetic + config coverage.
