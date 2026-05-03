@@ -37,3 +37,12 @@ data/external/*
 # OS
 .DS_Store
 Thumbs.db
+
+# Phase 14 — workbook ingestion local override.
+# The committed configs/workbook_v7_manifest.yaml is a SCAFFOLD with
+# `<TODO_*>` placeholder sheet names. The user copies it to the
+# `_local.yaml` variant, fills in real sheet names + row classification
+# rules, and runs ingestion against the local file. The local variant
+# is gitignored so live sheet identifiers and per-row classification
+# detail never reach the repo.
+configs/workbook_v7_manifest_local.yaml

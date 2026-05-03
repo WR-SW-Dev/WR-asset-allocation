@@ -1,0 +1,342 @@
+# Cashflow Modeling v7.xlsx — committed manifest SCAFFOLD.
+#
+# This file is a STRUCTURAL TEMPLATE, not a runnable manifest.
+# Sheet names that may carry person-identifying abbreviations are
+# replaced with placeholders (`<TODO_*>`). Privacy discipline:
+# PROJECT_SCOPE.md §5.3 + Phase 14 RT4 — live values, person-level
+# data, and abbreviations that decode to family-internal identifiers
+# stay outside the repo.
+#
+# ----------------------------------------------------------------------------
+# WORKFLOW — turn this scaffold into a runnable manifest:
+# ----------------------------------------------------------------------------
+#  1. Copy this file:
+#         cp configs/workbook_v7_manifest.yaml \
+#            configs/workbook_v7_manifest_local.yaml
+#     The `_local.yaml` variant is gitignored (see .gitignore).
+#  2. Open `configs/workbook_v7_manifest_local.yaml` and replace each
+#     `<TODO_*>` sheet_name placeholder with the actual workbook
+#     sheet name. Update `display_name` to a human label of your
+#     choosing. The committed `entity_id` values are stable codes
+#     (URL-safe, no colons) and SHOULD NOT be changed unless you
+#     have a reason — they anchor deterministic producer_ids in the
+#     Phase 14 → Phase 13 bridge.
+#  3. Author `row_classification_rules` per entity sheet locally.
+#     The committed scaffold leaves these empty with TODO markers;
+#     row labels carry sensitive per-line content and must not be
+#     committed.
+#  4. Point your StudyConfig at the local manifest:
+#         workbook_ingestion:
+#           workbook_path: ".../Cashflow Modeling v7.xlsx"
+#           manifest_version: "1"
+#           manifest: <load configs/workbook_v7_manifest_local.yaml>
+#  5. Run ingestion + reconciliation locally. Do NOT commit the
+#     local manifest. Do NOT paste live values, row labels, or
+#     person-level identifiers into chat or docs.
+# ----------------------------------------------------------------------------
+#
+# Header layout (probed via /tmp/phase14_layout_probe.py — not committed):
+#   - data-rich entity sheets place quarterly headers on row 4
+#     in `q_yyyy` format ("Q1 2025", "Q2 2025", ...).
+#   - aggregate / board / metadata sheets are declared but
+#     `display_only` so the parser never extracts data rows from them.
+#
+# Sheet count: 43 total (audit number from the discovery probe).
+#   structural / literal names: 17
+#   redacted / placeholder slots: 26
+
+workbook_version: "v7"
+expected_workbook_filename: "Cashflow Modeling v7.xlsx"
+default_header_row_index: 4
+period_header_format: "q_yyyy"
+
+# Subtotal / total row exclusion patterns. Defaults from Phase 14
+# carried forward; extend locally if v7 introduces new total-row
+# wording.
+subtotal_label_patterns:
+  - "total"
+  - "subtotal"
+  - "sum"
+  - "grand total"
+  - "net cash"
+
+# Family aggregate sheets — reconciliation targets only. The parser
+# reads these via `_reconcile_aggregate_sheet`; no
+# `CashFlowLineRecord` rows are emitted from them.
+family_aggregate_sheets:
+  - "Summary"
+  - "Summary Dev and Op"
+
+# Board snapshot sheets — period-by-period forecast snapshots.
+# Phase 14 reviewer tightening 3: reconciliation deltas surfaced as
+# advisory only.
+board_snapshot_sheets:
+  - "September 25 Board"
+  - "November 25 Board"
+  - "March 26 Board"
+  - "March 26 Board (2)"
+  - "June 26 Board"
+
+# Real-estate partnership sheets. The committed scaffold uses literal
+# names where the sheet name is clearly project-shaped
+# (project / place identifier rather than person identifier).
+re_partnership_sheets: []
+
+# Entity sheets. Each entry below is one of:
+#   (a) `display_only` placeholder for an aggregate / metadata /
+#       structurally-redundant sheet that we declare but do not parse.
+#   (b) `horizontal_quarter` (default) for a normal entity-level
+#       cash-flow sheet whose row labels are mapped to classification
+#       rules locally.
+#
+# `<TODO_*>` placeholders are NEVER valid sheet names in the live
+# workbook — the user must replace them in the local manifest.
+entity_sheets:
+  # ---- aggregate / display sheets (declared display_only) ----------
+  - sheet_name: "Cash Flow"
+    entity_id: "cash_flow_aggregate"
+    display_name: "Cash Flow (aggregate, display only)"
+    entity_type: "family_aggregate"
+    cash_flow_role: "operating"
+    layout_type: "display_only"
+
+  - sheet_name: "Assumptions"
+    entity_id: "assumptions_metadata"
+    display_name: "Assumptions (metadata, display only)"
+    entity_type: "family_aggregate"
+    cash_flow_role: "operating"
+    layout_type: "display_only"
+
+  - sheet_name: "Ownership"
+    entity_id: "ownership_structure"
+    display_name: "Ownership Structure (display only)"
+    entity_type: "family_aggregate"
+    cash_flow_role: "operating"
+    layout_type: "display_only"
+
+  # PB Westplan / PB Westplan v2: probe found legitimate label
+  # duplicates across sub-sections. Disposition: display_only until
+  # row_classification_rules can disambiguate.
+  - sheet_name: "PB Westplan"
+    entity_id: "pb_westplan"
+    display_name: "PB Westplan (project rollup, display only)"
+    entity_type: "real_estate_partnership"
+    cash_flow_role: "operating"
+    layout_type: "display_only"
+
+  - sheet_name: "PB Westplan v2"
+    entity_id: "pb_westplan_v2"
+    display_name: "PB Westplan v2 (project rollup, display only)"
+    entity_type: "real_estate_partnership"
+    cash_flow_role: "operating"
+    layout_type: "display_only"
+
+  # ---- entity-level cash-flow sheets (horizontal_quarter) ----------
+  # Generic project / place names below are committed literally.
+  # All other entity_sheets below this line use REDACTED
+  # placeholders — replace in the local manifest.
+  - sheet_name: "SE Holland"
+    entity_id: "re_se_holland"
+    display_name: "SE Holland (real estate)"
+    entity_type: "real_estate_partnership"
+    cash_flow_role: "operating"
+    # row_classification_rules: TODO — author locally; row labels
+    # carry sensitive per-line content and must not be committed.
+
+  - sheet_name: "WR-Dev"
+    entity_id: "re_wr_dev"
+    display_name: "WR Development (real estate, development)"
+    entity_type: "real_estate_partnership"
+    cash_flow_role: "investment"
+
+  - sheet_name: "LH"
+    entity_id: "entity_lh"
+    display_name: "LH (project)"
+    entity_type: "real_estate_partnership"
+    cash_flow_role: "operating"
+
+  - sheet_name: "LH (2)"
+    entity_id: "entity_lh_2"
+    display_name: "LH (2) (project variant)"
+    entity_type: "real_estate_partnership"
+    cash_flow_role: "operating"
+
+  - sheet_name: "LH - L and B Acq"
+    entity_id: "entity_lh_lb_acq"
+    display_name: "LH — Land and Building Acquisition"
+    entity_type: "real_estate_partnership"
+    cash_flow_role: "investment"
+
+  # ---- LLC-style sheets (REDACTED — abbreviations may be person-shaped)
+  # Two slots — discovery probe found 2 LLC-pattern sheets that
+  # didn't match a project / place name. Replace `<TODO_*>` sheet_name
+  # values with the actual workbook sheet names locally.
+  - sheet_name: "<TODO_LLC_A>"
+    entity_id: "entity_llc_a"
+    display_name: "Entity LLC A (operating)"
+    entity_type: "operating_llc"
+    cash_flow_role: "operating"
+
+  - sheet_name: "<TODO_LLC_B>"
+    entity_id: "entity_llc_b"
+    display_name: "Entity LLC B (operating)"
+    entity_type: "operating_llc"
+    cash_flow_role: "operating"
+
+  # ---- Trust / generation-skipping vehicle sheets (REDACTED) ------
+  # The discovery probe found ~14 trust-pattern sheets following an
+  # `[Initials] [Year] [TrustType]` convention. Replace placeholders
+  # locally with actual sheet names.
+  - sheet_name: "<TODO_TRUST_A>"
+    entity_id: "trust_a"
+    display_name: "Trust A (family trust)"
+    entity_type: "trust_family"
+    cash_flow_role: "distribution_only"
+
+  - sheet_name: "<TODO_TRUST_B>"
+    entity_id: "trust_b"
+    display_name: "Trust B (gift trust)"
+    entity_type: "trust_gift"
+    cash_flow_role: "distribution_only"
+
+  - sheet_name: "<TODO_TRUST_C>"
+    entity_id: "trust_c"
+    display_name: "Trust C (family trust)"
+    entity_type: "trust_family"
+    cash_flow_role: "distribution_only"
+
+  - sheet_name: "<TODO_TRUST_D>"
+    entity_id: "trust_d"
+    display_name: "Trust D (gift trust)"
+    entity_type: "trust_gift"
+    cash_flow_role: "distribution_only"
+
+  - sheet_name: "<TODO_TRUST_E>"
+    entity_id: "trust_e"
+    display_name: "Trust E (family trust, vintage)"
+    entity_type: "trust_family"
+    cash_flow_role: "distribution_only"
+
+  - sheet_name: "<TODO_TRUST_F>"
+    entity_id: "trust_f"
+    display_name: "Trust F (legacy trust)"
+    entity_type: "trust_family"
+    cash_flow_role: "distribution_only"
+
+  - sheet_name: "<TODO_TRUST_G>"
+    entity_id: "trust_g"
+    display_name: "Trust G (charitable trust)"
+    entity_type: "trust_crut"
+    cash_flow_role: "distribution_only"
+
+  - sheet_name: "<TODO_TRUST_H>"
+    entity_id: "trust_h"
+    display_name: "Trust H (charitable trust subset)"
+    entity_type: "trust_crut"
+    cash_flow_role: "distribution_only"
+
+  - sheet_name: "<TODO_TRUST_I>"
+    entity_id: "trust_i"
+    display_name: "Trust I (charitable trust subset)"
+    entity_type: "trust_crut"
+    cash_flow_role: "distribution_only"
+
+  - sheet_name: "<TODO_TRUST_J>"
+    entity_id: "trust_j"
+    display_name: "Trust J (charitable trust subset)"
+    entity_type: "trust_crut"
+    cash_flow_role: "distribution_only"
+
+  - sheet_name: "<TODO_TRUST_K>"
+    entity_id: "trust_k"
+    display_name: "Trust K (charitable trust)"
+    entity_type: "trust_crut"
+    cash_flow_role: "distribution_only"
+
+  - sheet_name: "<TODO_TRUST_L>"
+    entity_id: "trust_l"
+    display_name: "Trust L (family trust, current vintage)"
+    entity_type: "trust_family"
+    cash_flow_role: "distribution_only"
+
+  - sheet_name: "<TODO_TRUST_M>"
+    entity_id: "trust_m"
+    display_name: "Trust M (family trust, current vintage)"
+    entity_type: "trust_family"
+    cash_flow_role: "distribution_only"
+
+  - sheet_name: "<TODO_TRUST_N>"
+    entity_id: "trust_n"
+    display_name: "Trust N (gift trust, current vintage)"
+    entity_type: "trust_gift"
+    cash_flow_role: "distribution_only"
+
+  # ---- Individual / personal account sheets (REDACTED — person-shaped)
+  # Discovery probe flagged 5 single-token sheets as person-shaped.
+  # The 5th was a heuristic false positive (`<2A>` — likely "2024
+  # Actuals" or similar year-prefixed name); reclassify locally as
+  # appropriate.
+  - sheet_name: "<TODO_INDIV_A>"
+    entity_id: "indiv_a"
+    display_name: "Individual A account"
+    entity_type: "individual_account"
+    cash_flow_role: "distribution_only"
+
+  - sheet_name: "<TODO_INDIV_B>"
+    entity_id: "indiv_b"
+    display_name: "Individual B account"
+    entity_type: "individual_account"
+    cash_flow_role: "distribution_only"
+
+  - sheet_name: "<TODO_INDIV_C>"
+    entity_id: "indiv_c"
+    display_name: "Individual C account"
+    entity_type: "individual_account"
+    cash_flow_role: "distribution_only"
+
+  - sheet_name: "<TODO_INDIV_D>"
+    entity_id: "indiv_d"
+    display_name: "Individual D account"
+    entity_type: "individual_account"
+    cash_flow_role: "distribution_only"
+
+  - sheet_name: "<TODO_INDIV_E_OR_AGGREGATE>"
+    entity_id: "indiv_e_or_aggregate"
+    display_name: "Individual / aggregate placeholder (probe heuristic false-positive — reclassify locally)"
+    entity_type: "individual_account"
+    cash_flow_role: "operating"
+    layout_type: "display_only"
+
+  # ---- Capital / sub-account sheets (REDACTED) --------------------
+  # `*_Cap` style sheets in the probe: AG Cap, HG Cap, BCM, HG, HG3.
+  # Local manifest can split these into entity_llc / holding_llc /
+  # entity_individual as appropriate.
+  - sheet_name: "<TODO_CAP_A>"
+    entity_id: "capital_account_a"
+    display_name: "Capital account A"
+    entity_type: "holding_llc"
+    cash_flow_role: "investment"
+
+  - sheet_name: "<TODO_CAP_B>"
+    entity_id: "capital_account_b"
+    display_name: "Capital account B"
+    entity_type: "holding_llc"
+    cash_flow_role: "investment"
+
+  - sheet_name: "<TODO_CAP_C>"
+    entity_id: "capital_account_c"
+    display_name: "Capital account C"
+    entity_type: "holding_llc"
+    cash_flow_role: "investment"
+
+  - sheet_name: "<TODO_CAP_D>"
+    entity_id: "capital_account_d"
+    display_name: "Capital account D"
+    entity_type: "holding_llc"
+    cash_flow_role: "investment"
+
+  - sheet_name: "<TODO_CAP_E>"
+    entity_id: "capital_account_e"
+    display_name: "Capital account E"
+    entity_type: "holding_llc"
+    cash_flow_role: "investment"

@@ -9685,3 +9685,64 @@ future spending- and liquidity-related modeling work.
   wording narrowed to "RESOLVED for modeled distributable-income
   ingestion; legal / tax / entity-governance distributability
   remains out of scope."
+
+### 2026-05-03 — Phase 14.x: workbook_v7_manifest.yaml scaffold
+
+* **What.** Committed ``configs/workbook_v7_manifest.yaml`` as a
+  STRUCTURAL TEMPLATE — not a runnable manifest. All 43 sheets the
+  v7 workbook contains are enumerated by role; family aggregates,
+  board snapshots, and clearly-structural project / place names are
+  committed with literal sheet_names. Sheet names that may decode to
+  family-internal abbreviations (LLC codes, trust codes, person-shaped
+  names) carry ``<TODO_*>`` placeholder slots that the user fills in
+  locally before running ingestion.
+* **Privacy posture.** PROJECT_SCOPE.md §5.3 + Phase 14 RT4 stand:
+  no live values, no row labels, no per-line classification rules
+  committed. ``row_classification_rules`` are left as TODO on every
+  entity_sheet entry — they carry sensitive per-line content and
+  must be authored locally.
+* **Localize-then-use workflow.** Documented in the manifest's header
+  comment:
+  - copy ``configs/workbook_v7_manifest.yaml`` to
+    ``configs/workbook_v7_manifest_local.yaml`` (gitignored — see
+    ``.gitignore`` update);
+  - replace each ``<TODO_*>`` ``sheet_name`` with the actual workbook
+    sheet name; do not change committed ``entity_id`` values
+    (they anchor deterministic Phase 14 → Phase 13 producer_ids);
+  - author ``row_classification_rules`` per sheet locally;
+  - point ``StudyConfig.workbook_ingestion`` at the local manifest;
+  - run ingestion locally; do NOT commit the local manifest, raw
+    ingestion output, or any rendered report content that contains
+    live values.
+* **Manifest defaults reflect v7's layout** (probed via
+  ``/tmp/phase14_layout_probe.py`` — not committed):
+  - ``default_header_row_index: 4`` (v7 entity sheets place the
+    canonical quarter header on row 4)
+  - ``period_header_format: "q_yyyy"`` (e.g., "Q1 2025")
+  - ``subtotal_label_patterns`` carries the Phase 14 defaults
+* **Sheet disposition (43 total):**
+  - 2 family aggregates (literal: ``Summary``,
+    ``Summary Dev and Op``) — reconciliation targets
+  - 5 board snapshots (literal: 5 dated board sheets) —
+    advisory reconciliation only (Phase 14 RT3)
+  - 36 entity sheets:
+    - 6 ``display_only`` (Cash Flow, Assumptions, Ownership,
+      PB Westplan, PB Westplan v2, plus 1 person-shaped
+      placeholder marked display_only) — declared but no rows
+      extracted; right disposition for aggregate sheets that
+      legitimately repeat row labels across sub-sections
+    - 30 ``horizontal_quarter`` — 5 literal (project / place
+      names: SE Holland, WR-Dev, LH, LH (2), LH - L and B Acq)
+      + 25 placeholders (2 LLC, 14 trust, 5 individual, 5 capital)
+* **Tests.** Schema-load only (``WorkbookManifestConfig.model_validate``);
+  no ingestion run. The scaffold parses cleanly; sheet-name
+  uniqueness + entity_id uniqueness validators pass; total
+  declarations (50) tally to the workbook's 43 unique sheets via
+  family_aggregate (2) + board_snapshot (5) + entity_sheets (36).
+* **Backward-compatible.** Yes — adds a new file under ``configs/``;
+  the orchestrator does not auto-load it. Existing trajectories,
+  fixtures, and tests byte-identical.
+* **L19.** Held at PARTIALLY RESOLVED. The scaffold is the
+  prerequisite for the operational manifest-authoring milestone;
+  the milestone itself (local manifest authored + clean
+  reconciliation against the live workbook) is not yet complete.
