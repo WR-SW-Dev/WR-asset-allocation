@@ -11886,3 +11886,72 @@ Automatic distributability inference
 
 For now: **deterministic, worksheet-reconciled, and advisory where
 assumptions are incomplete.**
+
+---
+
+## Model buildout roadmap (2026-05-03)
+
+### Near-term gates (ordered)
+
+**1. L19 — cash-flow worksheet row classification (immediate)**
+
+- Fill `data/external/workbook_v7_rule_authoring_pilot.csv` locally.
+- Run Phase B–E validation and injection workflow.
+- Reduce unmatched lines to structural-only floor.
+- Regression: `source_used="cashflow_workbook"` must survive broader
+  row-classification changes (L20 regression check).
+- Close L19 when Phase E criteria pass.
+
+**2. PE pacing improvement** (after L19 stable)
+
+Needs fund-level commitment data locally:
+`fund_id`, `manager_id`, `vintage_year`, `commitment_usd`,
+`called_to_date_usd`, `distributed_to_date_usd`, `nav_usd`,
+`unfunded_usd`, call/distribution curve assumptions, and
+`entity_id` mapping back to worksheet lines.
+
+Must remain deterministic and worksheet-reconciled (design-lock at
+commit `01ff365`).
+
+**3. Distribution / income realism** (after L19 stable)
+
+The ingestion layer can already consume `distribution_inflow` category
+lines. Full recurring/non-recurring classification and distributable
+income profiling require L19 row classification to be complete first.
+
+**4. Manager terms enrichment** (after L19 stable)
+
+Phase 22 consumes manager terms diagnostics. Local position data still
+needs the full terms populated: lockup periods, notice days, gate
+thresholds, side-pocket flags, fee basis, management fee bps,
+incentive fee / carry, capital-call notice days.
+
+### Deferred gates
+
+**L2 — Monte Carlo / stochastic regime layer**
+
+Do not build until all deterministic inputs are honest. Pre-conditions:
+
+- L19 RESOLVED (completed row classification)
+- Stable position universe
+- Deterministic PE pacing from real fund data
+- Validated liquidity coverage on live inputs
+- Manager terms populated
+- Reconciliation gates verified on real local data
+
+**L5 — PE-leg pairing fragility**
+
+Relevant once recommitment modeling, multiple call/distribution streams,
+or fund-level pacing granularity increases.
+
+### Later enhancements (not near-term)
+
+```
+Semi-liquid redemption modeling
+Secondary-sale / liquidity haircut modeling
+Fee-aware optimization
+Tax-aware cash-flow modeling
+Entity-governance restrictions
+Stress / liquidity scenarios
+Stochastic STAIRS / regime-dependent returns
+```
