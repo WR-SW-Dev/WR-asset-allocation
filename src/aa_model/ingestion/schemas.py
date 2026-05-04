@@ -342,9 +342,7 @@ class WorkbookManifestConfig(BaseModel):
     def _sheet_names_globally_unique(self) -> WorkbookManifestConfig:
         # family_aggregate + board_snapshot must be globally unique with no
         # cross-role overlap with entity/RE sheets.
-        agg_board: list[str] = list(self.family_aggregate_sheets) + list(
-            self.board_snapshot_sheets
-        )
+        agg_board: list[str] = list(self.family_aggregate_sheets) + list(self.board_snapshot_sheets)
         agg_board_dups = sorted({n for n in agg_board if agg_board.count(n) > 1})
         if agg_board_dups:
             raise ValueError(

@@ -18,18 +18,14 @@ Coverage (8 tests):
 from __future__ import annotations
 
 import io
-from datetime import date
 
 import openpyxl
 import pytest
-
 from aa_model.ingestion.schemas import (
-    EntitySheetSpec,
     IngestionResult,
     WorkbookManifestConfig,
 )
 from aa_model.ingestion.workbook import ingest_workbook
-
 
 # ---- synthetic workbook helpers --------------------------------------------
 

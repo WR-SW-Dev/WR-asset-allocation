@@ -118,7 +118,7 @@ class LiquidityHorizonEntry:
     effective_window_days: int | None
     redemption_frequency: str | None
     notice_days: int | None
-    flags: tuple[str, ...]          # "gate", "side_pocket", "lockup"
+    flags: tuple[str, ...]  # "gate", "side_pocket", "lockup"
 
 
 @dataclass(frozen=True)
@@ -172,8 +172,8 @@ class CapitalCallNoticeDiagnostics:
 class ManagerTermsDiagnostics:
     total_positions: int
     total_nav_usd: float
-    managers_with_terms: int        # confidence ≠ "unknown"
-    managers_without_terms: int     # confidence == "unknown"
+    managers_with_terms: int  # confidence ≠ "unknown"
+    managers_without_terms: int  # confidence == "unknown"
     liquidity_horizon: LiquidityHorizonDiagnostics
     fee_exposure: FeeExposureDiagnostics
     capital_call_notice: CapitalCallNoticeDiagnostics
@@ -208,15 +208,11 @@ def compute_manager_terms_diagnostics(
         ensures override-sensitive buckets are classified consistently
         with compute_liquidity_coverage (tightening 1).
     """
-    manager_by_id: dict[str, ManagerTermsRecord] = {
-        m.manager_id: m for m in manager_terms
-    }
+    manager_by_id: dict[str, ManagerTermsRecord] = {m.manager_id: m for m in manager_terms}
 
     total_nav = sum(p.market_value_usd for p in positions)
     total_positions = len(positions)
-    managers_with_terms = sum(
-        1 for m in manager_terms if m.confidence != "unknown"
-    )
+    managers_with_terms = sum(1 for m in manager_terms if m.confidence != "unknown")
     managers_without_terms = len(manager_terms) - managers_with_terms
 
     # Aggregate per-manager: NAV, unfunded commitment, and semi-liquid NAV.
@@ -474,11 +470,11 @@ def render_manager_terms_section(diag: ManagerTermsDiagnostics) -> str:
         lines.append("| Manager | NAV | Window (days) | Flags |")
         lines.append("|---------|-----|---------------|-------|")
         for e in sorted(h.entries, key=lambda x: x.manager_id):
-            window_str = str(e.effective_window_days) if e.effective_window_days is not None else "—"
-            flags_str = ", ".join(e.flags) if e.flags else ""
-            lines.append(
-                f"| {e.manager_id} | {_fmt_m(e.nav_usd)} | {window_str} | {flags_str} |"
+            window_str = (
+                str(e.effective_window_days) if e.effective_window_days is not None else "—"
             )
+            flags_str = ", ".join(e.flags) if e.flags else ""
+            lines.append(f"| {e.manager_id} | {_fmt_m(e.nav_usd)} | {window_str} | {flags_str} |")
         lines.append("")
     bkts = h.by_horizon_bucket
     lines.append(
@@ -529,9 +525,7 @@ def render_manager_terms_section(diag: ManagerTermsDiagnostics) -> str:
         lines.append("|---------|-----|----------|---------------|")
         for e in sorted(n.entries, key=lambda x: x.manager_id):
             notice_str = (
-                str(e.capital_call_notice_days)
-                if e.capital_call_notice_days is not None
-                else "—"
+                str(e.capital_call_notice_days) if e.capital_call_notice_days is not None else "—"
             )
             lines.append(
                 f"| {e.manager_id} | {_fmt_m(e.nav_usd)} "
@@ -539,9 +533,7 @@ def render_manager_terms_section(diag: ManagerTermsDiagnostics) -> str:
             )
         lines.append("")
     notice_range = (
-        f"{n.min_notice_days}–{n.max_notice_days} days"
-        if n.min_notice_days is not None
-        else "n/a"
+        f"{n.min_notice_days}–{n.max_notice_days} days" if n.min_notice_days is not None else "n/a"
     )
     lines.append(
         f"Known notice: {_fmt_m(n.total_unfunded_with_known_notice)} unfunded  |  "

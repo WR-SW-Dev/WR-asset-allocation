@@ -24,12 +24,9 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
-
 from aa_model.liquidity.manager_terms_diagnostics import (
-    ManagerTermsDiagnostics,
     compute_manager_terms_diagnostics,
 )
-
 
 # ---- shared synthetic helpers -----------------------------------------------
 
@@ -163,7 +160,9 @@ def test_lockup_future_no_override_when_freq_larger():
     # annual + 30 notice = 395 days; lockup ends in 30 days
     lockup_date = date(2026, 4, 30)
     pos = [_pos(liquidity_bucket="semi_liquid")]
-    mgr = [_terms("mgr_a", redemption_frequency="annual", notice_days=30, lockup_end_date=lockup_date)]
+    mgr = [
+        _terms("mgr_a", redemption_frequency="annual", notice_days=30, lockup_end_date=lockup_date)
+    ]
     diag = compute_manager_terms_diagnostics(pos, mgr, as_of_date=_AS_OF)
     entry = diag.liquidity_horizon.entries[0]
     assert entry.effective_window_days == 395  # max(365+30, 30) = 395
@@ -176,7 +175,11 @@ def test_lockup_past_no_offset():
     """Phase 22 #6: lockup_end_date in past → no lockup extension."""
     lockup_date = date(2025, 12, 31)  # before as_of_date
     pos = [_pos(liquidity_bucket="semi_liquid")]
-    mgr = [_terms("mgr_a", redemption_frequency="quarterly", notice_days=0, lockup_end_date=lockup_date)]
+    mgr = [
+        _terms(
+            "mgr_a", redemption_frequency="quarterly", notice_days=0, lockup_end_date=lockup_date
+        )
+    ]
     diag = compute_manager_terms_diagnostics(pos, mgr, as_of_date=_AS_OF)
     entry = diag.liquidity_horizon.entries[0]
     assert entry.effective_window_days == 91
