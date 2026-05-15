@@ -90,3 +90,25 @@ Note: `cvxportfolio` and `riskfolio` are optional extras; both are pulled in by
 ## Active limitations (open)
 L1, L2, L3, L5, L7, L9, L10, L11, L12, L14 (partial), L17, L19 (partially resolved).
 See HERMES_TRACKING.md for the live table; MODEL_DOCUMENTATION.md for status lines per L#.
+
+## Developer Profile
+
+This system is maintained by an institutional SFO investment professional (CFA, CAIA) with deep expertise in:
+
+### Asset Allocation & Portfolio Management
+- **Multi-asset-class portfolio construction** — strategic/tactical allocation, rebalancing frameworks, dynamic allocation
+- **Institutional fund governance** — $14B+ AUM CIO/Deputy CIO experience, sovereign wealth & public pension fund oversight
+- **Cash-flow & liquidity modeling** — spending policies, capital call pacing, PE/PE obligations, fiscal period alignment
+- **Fixed income & derivatives** — duration management, treasury futures, swaps, structured products
+
+### Investment Management Expertise
+- **Manager research & selection** — active vs. passive evaluation, due diligence, ongoing monitoring
+- **Alternatives & real assets** — private equity, real estate, infrastructure, timber, commodities
+- **Capital markets analysis** — macro indicators, cross-asset correlations, forward return expectations
+- **Consultant management** — Callan consultant relationships, capital markets assumptions, manager searches
+
+### Technical & Data
+- **Python quantitative modeling** — pydantic schemas, deterministic pipelines, parquet/ledger structures
+- **Financial data** — SEC EDGAR 13F analysis, workbook ingestion/reconciliation, Excel interop
+- **Testing & validation** — pytest framework, determinism verification, reconciliation audits
+- **AI integration** — AI-augmented research, Claude/Grok analysis, automated reporting
