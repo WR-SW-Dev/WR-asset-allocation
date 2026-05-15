@@ -11945,18 +11945,34 @@ needs the full terms populated: lockup periods, notice days, gate
 thresholds, side-pocket flags, fee basis, management fee bps,
 incentive fee / carry, capital-call notice days.
 
-### Deferred gates
+### Monte Carlo / Stochastic Regime Layer — Implementation Status (as of 2026-05-15)
 
-**L2 — Monte Carlo / stochastic regime layer**
+**BUILT for synthetic stress testing; NOT YET DECISION-GRADE.**
 
-Do not build until all deterministic inputs are honest. Pre-conditions:
+Framework complete (commits `d2c3144` through `9b34373`):
+
+- **MC-0** Design lock (`d2c3144`) — architecture, stochastic boundaries, synthetic scope
+- **MC-1** Simulation core (`478d902`) — seeded path generation, reproducible, no global state
+- **MC-2** Liquidity stress integration (`971379f`) — paths → coverage metrics, breach detection
+- **MC-3** Reporting layer (`9b34373`) — CSV summary, parquet paths, markdown report, JSON manifest
+
+Current state:
+
+- ✅ Deterministic reproducibility (same seed + config → byte-stable output)
+- ✅ Opt-in only (no Monte Carlo unless explicitly configured)
+- ✅ Deterministic layer unchanged (existing liquidity coverage unaffected)
+- ✅ Advisory-only outputs (explicitly marked as not decision-grade in reports)
+- ❌ Live client-data integration (awaiting L19, L20, Phase 23)
+- ❌ Hard policy gates or decision automation
+- ❌ Real manager terms, entity cash flows, RE stress calibration
+
+**Transition to decision-grade only after:**
 
 - L19 RESOLVED (completed row classification)
-- Stable position universe
-- Deterministic PE pacing from real fund data
-- Validated liquidity coverage on live inputs
-- Manager terms populated
-- Reconciliation gates verified on real local data
+- L20 validated (workbook capital-call reconciliation)
+- Phase 23 complete (PE commitment book ingested)
+- Deterministic spine validated on real local data
+- Live MC configs authored and reviewed
 
 **L5 — PE-leg pairing fragility**
 
