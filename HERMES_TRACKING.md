@@ -2,33 +2,38 @@
 
 > Stable entry point for Hermes/OpenWebUI dashboards. Update sections marked
 > `<!-- auto -->` from CI/cron; update prose sections by hand at phase boundaries.
-> Last manual sync: 2026-05-04.
+> Last manual sync: 2026-05-24.
 
 ---
 
 ## Current State <!-- auto -->
 
-- Current phase: **Phase 23 design lock — PE real-data commitment input layer (locked; implementation pending)**
-- Latest commit: `7b07950` — docs(tracking): MODE A sync 2026-05-07 — 386 tests stable, 1 ruff error carried, gov flag unresolved
+- Current phase: **Monte Carlo MC-0 through MC-3 implemented** (liquidity stress architecture — simulation core + liquidity stress + reporting); Phase 23 design lock (PE real-data commitment input layer) still pending at `f81ff43`
+- Latest commit: `6a43114` — docs(CLAUDE.md): add Developer Profile with investment expertise
 - Branch: `main` (0 ahead, 0 behind origin)
-- Last pushed: 2026-05-07 18:44:16 -0400 (`7b07950`)
+- Last pushed: 2026-05-15 14:16:37 -0400 (`6a43114`)
 - Working tree: clean
-- Tests: **386 passed** (`.venv/bin/pytest -p no:warnings --ignore=tests/test_transaction_cost_summary.py`; 4 cvxportfolio-gated omitted; +0 vs prior sync of 386)
-- Ruff: **1 error** — `tests/test_review_fixes_2026_05_05.py:13` I001 import sort (fixable; `chore(lint):` sweep pending — recurring lint-debt-after-fix pattern)
-- Latest run set: `data/processed/runs/aa-dc07a16dffa9-96451d89bace-20260508T232727Z-0447-crisis_correlation`
+- Tests: **411 passed** (`.venv/bin/pytest -p no:warnings --ignore=tests/test_transaction_cost_summary.py`; 4 cvxportfolio-gated omitted; **+25** vs prior sync of 386 — new Monte Carlo MC-1/MC-2/MC-3 test suites)
+- Ruff: **14 errors** (13 fixable with `--fix`) — Monte Carlo lint debt: 6 F401 unused imports, 2 UP017 datetime.UTC, 3 I001 unsorted imports, 1 B905 zip-strict, 1 F841 unused var, +1 I001 carryover from `test_review_fixes_2026_05_05.py`. Recurring lint-debt-after-phase pattern confirmed.
+- Latest run set: `data/processed/runs/aa-dc07a16dffa9-96451d89bace-20260524T223400Z-ea80-crisis_correlation`
 
-Recent series (no new behavior commits since last tracker sync at `7b07950`; most recent 5 shown):
-- `7b07950` docs(tracking): MODE A sync 2026-05-07 — 386 tests stable, 1 ruff error carried, gov flag unresolved
-- `3b45185` docs(tracking): MODE A sync 2026-05-06 — 386 tests stable, 1 ruff error carried, gov flag unresolved
-- `5977b19` docs(tracking): MODE A sync 2026-05-05 — 386 tests, 1 ruff error, governance flag on 3 fix() commits
-- `0280024` fix(manifest): sanitize invocation_id against path traversal
-- `d2d9e09` fix(config): expand hash, resolve overlay paths, tighten policy schemas
+Recent series (7 commits since last tracker sync at `7b07950`):
+- `6a43114` docs(CLAUDE.md): add Developer Profile with investment expertise
+- `7ba967d` docs(model): record Monte Carlo MC-0 through MC-3 implementation status
+- `9b34373` feat(monte_carlo): Phase MC-3 — reporting layer
+- `971379f` feat(monte_carlo): Phase MC-2 — liquidity stress integration
+- `478d902` feat(monte_carlo): Phase MC-1 — simulation core implementation
+- `d2c3144` docs(model): lock Monte Carlo liquidity stress architecture
+- `a4cc08c` docs(tracking): MODE A sync 2026-05-08 — 386 tests stable, 1 ruff error carried, gov flag unresolved
 
-⚠️ **Governance flag** (carried forward — unresolved): `021a408` / `d2d9e09` / `0280024` touch `src/aa_model/` (manifest, loaders, coverage, pe/call_obligation, pe/call_reconciliation, pe/ta_model) but `MODEL_DOCUMENTATION.md` was not updated in this range. +195 lines of new tests in `test_review_fixes_2026_05_05.py` suggest substantive behavior changes beyond cosmetic fixes. Recommend a `docs(model):` follow-up for the three `fix()` commits to satisfy the behavior-change governance rule.
+⚠️ **Governance flag** (carried forward — unresolved): `021a408` / `d2d9e09` / `0280024` touch `src/aa_model/` (manifest, loaders, coverage, pe/call_obligation, pe/call_reconciliation, pe/ta_model) but `MODEL_DOCUMENTATION.md` was not updated in this range. The Monte Carlo phases (MC-0 through MC-3) at `7ba967d` updated MODEL_DOCUMENTATION.md for MC work but did NOT cover these earlier `fix()` commits. Recommend a `docs(model):` follow-up to satisfy the behavior-change governance rule.
+
+Governance check (MC phases): PASS — `478d902`/`971379f`/`9b34373` touch `src/aa_model/monte_carlo/`; MODEL_DOCUMENTATION.md updated at `7ba967d`.
 
 ## Open Gates
 
 - [ ] **Phase 23 implementation** — design locked at `f81ff43` (PE real-data commitment input layer). Implementation pending.
+- [ ] **Monte Carlo MC-0 through MC-3** — DESIGN LOCKED + IMPLEMENTED at `d2c3144`/`478d902`/`971379f`/`9b34373`. MC lint debt sweep (`chore(lint):`) still pending.
 - [ ] **Phase 7 STAIRS PE adapter** — design locked at `993a751`. Implementation
       blocked until tests + invariants drafted alongside `pe/stairs_adapter.py`.
 - [ ] **Phase 10 L14 transaction-cost diagnostics** — partially resolved at
@@ -124,15 +129,15 @@ Cron jobs are registered separately in Hermes (see `cronjob list`).
 
 ### Asset Allocation Model — Status
 ```
-Current phase:        Phase 23 — PE real-data commitment input layer (design locked; implementation pending)
-Last pushed commit:   3b45185  (docs(tracking): MODE A sync 2026-05-06)
-Tests:                386 passed (--ignore=tests/test_transaction_cost_summary.py; 4 cvxportfolio-gated omitted)
-Ruff errors:          1 (I001 fixable in test_review_fixes_2026_05_05.py; chore(lint): sweep pending)
-Open limitations:     11  (L20 resolved Phase 20+21 2026-05-03)
+Current phase:        Monte Carlo MC-0 through MC-3 implemented (liquidity stress); Phase 23 design lock pending
+Last pushed commit:   6a43114  (docs(CLAUDE.md): add Developer Profile)
+Tests:                411 passed (--ignore=tests/test_transaction_cost_summary.py; 4 cvxportfolio-gated omitted; +25 MC tests)
+Ruff errors:          14 (13 fixable; Monte Carlo lint debt + 1 I001 carryover)
+Open limitations:     11  (L1-L3, L5, L7, L9-L12, L14 partial, L17, L19 partial)
 Resolved limitations: 8   (L4, L6, L8, L13, L15, L16, L18, L20)
-Next gated task:      Phase 23 implementation
-Last model-doc update: 2026-05-04
-Latest run:           20260507T224306Z (crisis_correlation)
+Next gated task:      Phase 23 implementation (PE real-data commitment input layer)
+Last model-doc update: 2026-05-15 (MC-0 through MC-3 recorded at 7ba967d)
+Latest run:           20260524T223400Z (crisis_correlation)
 ```
 
 ### Governance Gates
