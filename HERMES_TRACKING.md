@@ -9,26 +9,19 @@
 ## Current State <!-- auto -->
 
 - Current phase: **Monte Carlo MC-0 through MC-3 implemented** (liquidity stress architecture — simulation core + liquidity stress + reporting); Phase 23 design lock (PE real-data commitment input layer) still pending at `f81ff43`
-- Latest commit: `6a43114` — docs(CLAUDE.md): add Developer Profile with investment expertise
+- Latest commit: `3c0e8ee` — docs(tracking): MODE A sync 2026-05-25 — 411 tests, MC-0/MC-3 complete
 - Branch: `main` (0 ahead, 0 behind origin)
-- Last pushed: 2026-05-15 14:16:37 -0400 (`6a43114`)
+- Last pushed: 2026-05-25 11:46:39 -0400 (`3c0e8ee`)
 - Working tree: clean
-- Tests: **411 passed** (`.venv/bin/pytest -p no:warnings --ignore=tests/test_transaction_cost_summary.py`; 4 cvxportfolio-gated omitted; **+25** vs prior sync of 386 — new Monte Carlo MC-1/MC-2/MC-3 test suites)
+- Tests: **411 passed** (`.venv/bin/pytest -p no:warnings --ignore=tests/test_transaction_cost_summary.py`; 4 cvxportfolio-gated omitted; unchanged vs prior sync of 411)
 - Ruff: **14 errors** (13 fixable with `--fix`) — Monte Carlo lint debt: 6 F401 unused imports, 2 UP017 datetime.UTC, 3 I001 unsorted imports, 1 B905 zip-strict, 1 F841 unused var, +1 I001 carryover from `test_review_fixes_2026_05_05.py`. Recurring lint-debt-after-phase pattern confirmed.
-- Latest run set: `data/processed/runs/aa-dc07a16dffa9-96451d89bace-20260524T223400Z-ea80-crisis_correlation`
+- Latest run set: `data/processed/runs/aa-dc07a16dffa9-96451d89bace-20260617T204754Z-1ca6-crisis_correlation`
 
-Recent series (7 commits since last tracker sync at `7b07950`):
-- `6a43114` docs(CLAUDE.md): add Developer Profile with investment expertise
-- `7ba967d` docs(model): record Monte Carlo MC-0 through MC-3 implementation status
-- `9b34373` feat(monte_carlo): Phase MC-3 — reporting layer
-- `971379f` feat(monte_carlo): Phase MC-2 — liquidity stress integration
-- `478d902` feat(monte_carlo): Phase MC-1 — simulation core implementation
-- `d2c3144` docs(model): lock Monte Carlo liquidity stress architecture
-- `a4cc08c` docs(tracking): MODE A sync 2026-05-08 — 386 tests stable, 1 ruff error carried, gov flag unresolved
+No new behavior commits since last sync at `6a43114`. Only `3c0e8ee` (prior tracker sync) has landed.
 
-⚠️ **Governance flag** (carried forward — unresolved): `021a408` / `d2d9e09` / `0280024` touch `src/aa_model/` (manifest, loaders, coverage, pe/call_obligation, pe/call_reconciliation, pe/ta_model) but `MODEL_DOCUMENTATION.md` was not updated in this range. The Monte Carlo phases (MC-0 through MC-3) at `7ba967d` updated MODEL_DOCUMENTATION.md for MC work but did NOT cover these earlier `fix()` commits. Recommend a `docs(model):` follow-up to satisfy the behavior-change governance rule.
+⚠️ **Stale governance flag**: Flag from `021a408` (2026-05-05) has been unresolved for 43 days. Recommend either (a) `docs(model):` follow-up commit to document the behavior changes in `src/aa_model/` (manifest, loaders, coverage, pe/call_obligation, pe/call_reconciliation, pe/ta_model), or (b) formally accept as known debt with an `# Unresolved` annotation in MODEL_DOCUMENTATION.md. Carrying an unresolved flag indefinitely reduces the tracker's signal-to-noise ratio — future flags may be ignored.
 
-Governance check (MC phases): PASS — `478d902`/`971379f`/`9b34373` touch `src/aa_model/monte_carlo/`; MODEL_DOCUMENTATION.md updated at `7ba967d`.
+Governance check (this range `6a43114..3c0e8ee`): PASS — only `HERMES_TRACKING.md` touched; no behavior paths.
 
 ## Open Gates
 
@@ -130,14 +123,15 @@ Cron jobs are registered separately in Hermes (see `cronjob list`).
 ### Asset Allocation Model — Status
 ```
 Current phase:        Monte Carlo MC-0 through MC-3 implemented (liquidity stress); Phase 23 design lock pending
-Last pushed commit:   6a43114  (docs(CLAUDE.md): add Developer Profile)
-Tests:                411 passed (--ignore=tests/test_transaction_cost_summary.py; 4 cvxportfolio-gated omitted; +25 MC tests)
+Last pushed commit:   3c0e8ee  (docs(tracking): MODE A sync 2026-05-25)
+Tests:                411 passed (--ignore=tests/test_transaction_cost_summary.py; 4 cvxportfolio-gated omitted)
 Ruff errors:          14 (13 fixable; Monte Carlo lint debt + 1 I001 carryover)
 Open limitations:     11  (L1-L3, L5, L7, L9-L12, L14 partial, L17, L19 partial)
 Resolved limitations: 8   (L4, L6, L8, L13, L15, L16, L18, L20)
 Next gated task:      Phase 23 implementation (PE real-data commitment input layer)
 Last model-doc update: 2026-05-15 (MC-0 through MC-3 recorded at 7ba967d)
-Latest run:           20260524T223400Z (crisis_correlation)
+Latest run:           20260617T204754Z (crisis_correlation)
+Stale gov flag:       43 days unresolved (021a408, 2026-05-05) — escalate or accept
 ```
 
 ### Governance Gates
