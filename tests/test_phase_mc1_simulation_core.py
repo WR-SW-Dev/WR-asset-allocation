@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import pytest
-
 from aa_model.monte_carlo import (
     CallTimingScenario,
     MonteCarloConfig,
@@ -20,7 +19,6 @@ from aa_model.monte_carlo import (
     SpendingScenario,
     compute_monte_carlo,
 )
-
 
 # ---- fixtures ---------------------------------------------------------------
 
@@ -88,7 +86,7 @@ def test_same_seed_produces_identical_paths(synthetic_config: MonteCarloConfig) 
     assert result1.p5_coverage_months == result2.p5_coverage_months
 
     # Compare individual paths
-    for p1, p2 in zip(result1.paths, result2.paths):
+    for p1, p2 in zip(result1.paths, result2.paths, strict=False):
         assert p1.path_id == p2.path_id
         assert p1.final_nav_usd == p2.final_nav_usd
         assert p1.cumulative_return_pct == p2.cumulative_return_pct

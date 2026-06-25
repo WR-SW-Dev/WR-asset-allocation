@@ -12,16 +12,17 @@
 - Latest commit: `3c0e8ee` — docs(tracking): MODE A sync 2026-05-25 — 411 tests, MC-0/MC-3 complete
 - Branch: `main` (0 ahead, 0 behind origin)
 - Last pushed: 2026-05-25 11:46:39 -0400 (`3c0e8ee`)
-- Working tree: clean
-- Tests: **411 passed** (`.venv/bin/pytest -p no:warnings --ignore=tests/test_transaction_cost_summary.py`; 4 cvxportfolio-gated omitted; unchanged vs prior sync of 411)
+- Local HEAD: `32b2ab3` — docs(tracking): MODE A sync 2026-06-17 — fix self-ref (3c0e8ee), stale gov flag escalation (43d) (1 ahead, 0 behind origin)
+- Working tree: clean (HERMES_TRACKING.md only — this file)
+- Tests: **411 passed** (unchanged vs last committed sync `3c0e8ee`) (`.venv/bin/pytest -p no:warnings --ignore=tests/test_transaction_cost_summary.py`; 4 cvxportfolio-gated omitted)
 - Ruff: **14 errors** (13 fixable with `--fix`) — Monte Carlo lint debt: 6 F401 unused imports, 2 UP017 datetime.UTC, 3 I001 unsorted imports, 1 B905 zip-strict, 1 F841 unused var, +1 I001 carryover from `test_review_fixes_2026_05_05.py`. Recurring lint-debt-after-phase pattern confirmed.
-- Latest run set: `data/processed/runs/aa-dc07a16dffa9-96451d89bace-20260617T204754Z-1ca6-crisis_correlation`
+- Latest run set: `data/processed/runs/aa-dc07a16dffa9-96451d89bace-20260625T122219Z-8191-crisis_correlation`
 
-No new behavior commits since last sync at `6a43114`. Only `3c0e8ee` (prior tracker sync) has landed.
+No new behavior commits since last sync at `3c0e8ee`. Only `32b2ab3` (prior tracker sync, unpushed) has landed locally.
 
-⚠️ **Stale governance flag**: Flag from `021a408` (2026-05-05) has been unresolved for 43 days. Recommend either (a) `docs(model):` follow-up commit to document the behavior changes in `src/aa_model/` (manifest, loaders, coverage, pe/call_obligation, pe/call_reconciliation, pe/ta_model), or (b) formally accept as known debt with an `# Unresolved` annotation in MODEL_DOCUMENTATION.md. Carrying an unresolved flag indefinitely reduces the tracker's signal-to-noise ratio — future flags may be ignored.
+⚠️ **Stale governance flag**: Flag from `021a408` (2026-05-05) has been unresolved for 51 days. Recommend either (a) `docs(model):` follow-up commit to document the behavior changes in `src/aa_model/` (manifest, loaders, coverage, pe/call_obligation, pe/call_reconciliation, pe/ta_model), or (b) formally accept as known debt with an `# Unresolved` annotation in MODEL_DOCUMENTATION.md. Carrying an unresolved flag indefinitely reduces the tracker's signal-to-noise ratio — future flags may be ignored.
 
-Governance check (this range `6a43114..3c0e8ee`): PASS — only `HERMES_TRACKING.md` touched; no behavior paths.
+Governance check (this range `3c0e8ee..HEAD`): PASS — only `32b2ab3` (docs(tracking)) touched; no behavior paths.
 
 ## Open Gates
 
@@ -124,14 +125,15 @@ Cron jobs are registered separately in Hermes (see `cronjob list`).
 ```
 Current phase:        Monte Carlo MC-0 through MC-3 implemented (liquidity stress); Phase 23 design lock pending
 Last pushed commit:   3c0e8ee  (docs(tracking): MODE A sync 2026-05-25)
-Tests:                411 passed (--ignore=tests/test_transaction_cost_summary.py; 4 cvxportfolio-gated omitted)
+Local HEAD:           32b2ab3  (docs(tracking): MODE A sync 2026-06-17 — 1 ahead, 0 behind)
+Tests:                411 passed (unchanged vs last committed sync 3c0e8ee; --ignore=tests/test_transaction_cost_summary.py; 4 cvxportfolio-gated omitted)
 Ruff errors:          14 (13 fixable; Monte Carlo lint debt + 1 I001 carryover)
 Open limitations:     11  (L1-L3, L5, L7, L9-L12, L14 partial, L17, L19 partial)
 Resolved limitations: 8   (L4, L6, L8, L13, L15, L16, L18, L20)
 Next gated task:      Phase 23 implementation (PE real-data commitment input layer)
 Last model-doc update: 2026-05-15 (MC-0 through MC-3 recorded at 7ba967d)
-Latest run:           20260617T204754Z (crisis_correlation)
-Stale gov flag:       43 days unresolved (021a408, 2026-05-05) — escalate or accept
+Latest run:           20260625T122219Z (aa-dc07a16dffa9-96451d89bace-20260625T122219Z-8191-crisis_correlation)
+Stale gov flag:       51 days unresolved (021a408, 2026-05-05) — escalate or accept
 ```
 
 ### Governance Gates

@@ -6,7 +6,7 @@ Produce summary CSV, paths parquet, markdown report, and JSON manifest.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -169,7 +169,7 @@ def _write_report_markdown(result: MonteCarloResult, path: Path) -> None:
     lines = []
 
     lines.append("# Monte Carlo Liquidity Stress Report\n")
-    lines.append(f"**Generated:** {datetime.now(timezone.utc).isoformat()}\n")
+    lines.append(f"**Generated:** {datetime.now(UTC).isoformat()}\n")
     lines.append(f"**Config Hash:** `{result.config_hash}`\n")
     lines.append(f"**Fixture Hash:** `{result.fixture_hash}`\n")
     lines.append(f"**Seed:** {result.seed if result.seed is not None else 'None (non-deterministic)'}\n")

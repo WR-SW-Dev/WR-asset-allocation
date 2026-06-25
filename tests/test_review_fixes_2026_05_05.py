@@ -17,7 +17,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from aa_model.io.loaders import (
     hash_study_config,
     load_local_study_config,
@@ -29,7 +28,6 @@ from aa_model.liquidity.coverage import (
     compute_liquidity_coverage,
 )
 from aa_model.pe.reconciliation_gates import ReconciliationGatesConfig
-
 
 # ---- #2 hash coverage -------------------------------------------------------
 

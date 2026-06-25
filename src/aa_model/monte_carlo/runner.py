@@ -7,7 +7,7 @@ computing per-path metrics, aggregating results.
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 import pandas as pd
@@ -134,7 +134,7 @@ def compute_monte_carlo(
     p95_final_nav = float(np.percentile(all_final_navs, 95))
 
     manifest = MonteCarloManifest(
-        timestamp_utc=datetime.now(timezone.utc),
+        timestamp_utc=datetime.now(UTC),
         config_hash=config.config_hash,
         fixture_hash=fixture_hash,
         num_paths=config.num_paths,

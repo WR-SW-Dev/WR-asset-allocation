@@ -11,11 +11,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 import pandas as pd
 import pytest
-
 from aa_model.monte_carlo import (
     CallTimingScenario,
     MonteCarloConfig,
@@ -28,7 +26,6 @@ from aa_model.monte_carlo.reporting import (
     monte_carlo_summary_table,
     write_monte_carlo_artifacts,
 )
-
 
 # ---- fixtures ---------------------------------------------------------------
 
@@ -248,7 +245,7 @@ def test_paths_dataframe(synthetic_mc_result: object) -> None:
 
 def test_advisory_caveat_in_all_outputs(synthetic_mc_result: object, tmp_path: Path) -> None:
     """Advisory caveat should appear in report and manifest."""
-    written = write_monte_carlo_artifacts(
+    write_monte_carlo_artifacts(
         synthetic_mc_result,
         tmp_path,
     )

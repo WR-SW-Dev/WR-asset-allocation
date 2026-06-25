@@ -12,7 +12,6 @@ from __future__ import annotations
 import datetime
 
 import pytest
-
 from aa_model.ingestion.schemas_position import PositionRecord
 from aa_model.liquidity.coverage import LiquidityObligationConfig
 from aa_model.monte_carlo import (
@@ -23,7 +22,6 @@ from aa_model.monte_carlo import (
     compute_monte_carlo,
 )
 from aa_model.monte_carlo.liquidity_stress import apply_monte_carlo_stress_to_positions
-
 
 # ---- fixtures ---------------------------------------------------------------
 
