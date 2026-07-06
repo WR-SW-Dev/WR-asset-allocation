@@ -383,3 +383,75 @@ def test_compute_monte_carlo_rejects_liquid_greater_than_total() -> None:
             initial_liquid_nav=600_000,  # Exceeds total
             annual_spend=50_000,
         )
+
+
+# ---- Required-reserve solve ------------------------------------------------
+
+
+def test_required_reserves_monotonic_in_confidence(synthetic_config: MonteCarloConfig) -> None:
+    """Higher confidence must never require a smaller reserve."""
+    result = compute_monte_carlo(
+        synthetic_config,
+        initial_nav=1_000_000,
+        initial_liquid_nav=200_000,
+        annual_spend=50_000,
+    )
+    assert (
+        result.required_liquid_nav_80pct_confidence
+        <= result.required_liquid_nav_90pct_confidence
+        <= result.required_liquid_nav_95pct_confidence
+    )
+    # Every path carries a finite, non-negative reserve for this benign config.
+    for p in result.paths:
+        assert p.required_initial_liquid_nav >= 0.0
+
+
+def test_required_reserves_deterministic(synthetic_config: MonteCarloConfig) -> None:
+    """Same seed + config → identical per-path and aggregate reserves."""
+    kw = dict(initial_nav=1_000_000, initial_liquid_nav=200_000, annual_spend=50_000)
+    r1 = compute_monte_carlo(synthetic_config, **kw)
+    r2 = compute_monte_carlo(synthetic_config, **kw)
+    assert r1.required_liquid_nav_90pct_confidence == r2.required_liquid_nav_90pct_confidence
+    assert [p.required_initial_liquid_nav for p in r1.paths] == [
+        p.required_initial_liquid_nav for p in r2.paths
+    ]
+
+
+def test_required_reserve_matches_closed_form_zero_vol() -> None:
+    """Zero-vol, no-return, no-call case has a hand-computable reserve.
+
+    Returns are 0 (gross factor stays 1.0), quarterly spend is a constant
+    40_000/4 = 10_000, no PE calls, threshold = 1.0 month. The binding quarter
+    is the last: cumulative outflow 8*10_000 plus the 1-month bar 10_000/4,
+    all at gross factor 1.0 → 82_500. All paths are identical, so every
+    confidence level reports the same reserve.
+    """
+    config = MonteCarloConfig(
+        num_paths=10,
+        horizon_quarters=8,
+        random_seed=7,
+        return_scenarios={"eq": ReturnScenario("eq", 0.0, 0.0, None)},
+        spending_scenarios={"base": SpendingScenario("base", 0.0, 0.0, None)},
+        call_scenarios={"pe": CallTimingScenario("pe", [0.0] * 8, 2.5, 0.0)},
+    )
+    result = compute_monte_carlo(
+        config,
+        initial_nav=1_000_000,
+        initial_liquid_nav=500_000,
+        annual_spend=40_000,
+        # no base_pe_commitments → no PE calls
+    )
+    for p in result.paths:
+        assert p.required_initial_liquid_nav == pytest.approx(82_500.0)
+    assert result.required_liquid_nav_80pct_confidence == pytest.approx(82_500.0)
+    assert result.required_liquid_nav_95pct_confidence == pytest.approx(82_500.0)
+
+    # Independent check: exactly this reserve avoids breach; a dollar less breaches.
+    at_reserve = compute_monte_carlo(
+        config, initial_nav=1_000_000, initial_liquid_nav=82_500.0, annual_spend=40_000
+    )
+    assert at_reserve.probability_of_breach == 0.0
+    below = compute_monte_carlo(
+        config, initial_nav=1_000_000, initial_liquid_nav=82_499.0, annual_spend=40_000
+    )
+    assert below.probability_of_breach == 1.0
