@@ -482,9 +482,11 @@ class GuardrailConfig(BaseModel):
     # replaced by compute_spending_base(...) on the same NAV view.
     # Owl-only — flat_real / smoothing have no rate concept.
     #
-    # ``"distributable_income"`` is parked in the Literal but
-    # raises NotImplementedError at runtime; Phase 12.5 lands the
-    # new ``distribution_inflow`` ledger flow type.
+    # ``"distributable_income"`` is the Phase 12.5 / L19 flow-side base:
+    # a trailing-window sum of realized distributable income, computed by
+    # compute_distributable_income_base(...) and requiring
+    # distribution_window_quarters + bootstrap_distributable_income_usd
+    # (validated below). Fully implemented — not a stub.
     #
     # ``"liquid_plus_income_producing_nav"`` includes the **NAV**
     # of buckets tagged ``income_producing``; it does NOT measure
