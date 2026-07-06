@@ -43,6 +43,13 @@ class MonteCarloPathResult:
         Worst peak-to-trough decline (≤ 0).
     drawdown_quarters : int
         Duration of max drawdown in quarters.
+    required_initial_liquid_nav : float
+        Minimum *initial* liquid NAV this path would have needed to avoid
+        any coverage breach, given its own realized returns / spending / PE
+        calls. Closed-form (see ``runner._required_initial_liquid_nav``);
+        ``float('inf')`` when no finite reserve suffices (gross return factor
+        turns non-positive). Aggregated across paths into the confidence-level
+        reserves on :class:`MonteCarloResult`.
     """
 
     path_id: int
@@ -58,6 +65,7 @@ class MonteCarloPathResult:
     cumulative_return_pct: float = 0.0
     max_drawdown_pct: float = 0.0
     drawdown_quarters: int = 0
+    required_initial_liquid_nav: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -133,11 +141,13 @@ class MonteCarloResult:
     best_5pct_coverage : float
         Maximum coverage from best-5% paths.
     required_liquid_nav_80pct_confidence : float
-        Liquid NAV needed for 80% no-breach probability.
+        Absolute initial liquid NAV that covers 80% of paths without a
+        breach — the 80th-percentile order statistic of each path's
+        closed-form ``required_initial_liquid_nav``.
     required_liquid_nav_90pct_confidence : float
-        Liquid NAV needed for 90% no-breach probability.
+        As above, at 90% path coverage.
     required_liquid_nav_95pct_confidence : float
-        Liquid NAV needed for 95% no-breach probability.
+        As above, at 95% path coverage.
     median_final_nav : float
         Median terminal NAV.
     p5_final_nav : float

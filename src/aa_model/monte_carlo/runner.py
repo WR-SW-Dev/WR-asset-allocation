@@ -123,9 +123,10 @@ def compute_monte_carlo(
     best_5pct_indices = np.argsort(all_coverages)[-worst_5pct_count:]
     best_5pct_coverage = float(np.mean(all_coverages[best_5pct_indices]))
 
-    # Required reserves: find liquid NAV where breach_probability drops below each confidence level
-    req_nav_80, req_nav_90, req_nav_95 = _compute_required_reserves(
-        paths, confidence_levels, breach_threshold, initial_liquid_nav
+    # Required reserves: empirical quantile of each path's closed-form
+    # minimum initial liquid NAV, one per confidence level.
+    req_nav_80, req_nav_90, req_nav_95 = _aggregate_required_reserves(
+        paths, confidence_levels
     )
 
     # Final NAV percentiles
@@ -202,6 +203,16 @@ def _generate_single_path(
     base_return_key = list(config.return_scenarios.keys())[0]
     returns = generator.generate_return_path(base_return_key, path_id)
 
+    # Total PE capital calls per quarter (summed across sleeves). Hoisted out
+    # of the quarter loop — generate_call_path is deterministic per path, so
+    # regenerating it each quarter only wasted work.
+    total_calls_by_quarter = np.zeros(horizon, dtype=float)
+    for pe_sleeve, commitment in base_pe_commitments.items():
+        if pe_sleeve in config.call_scenarios:
+            calls = generator.generate_call_path(pe_sleeve, commitment, path_id)
+            n = min(horizon, len(calls))
+            total_calls_by_quarter[:n] += calls[:n]
+
     # Simulate quarters
     current_nav = initial_nav
     current_liquid = initial_liquid_nav
@@ -216,13 +227,10 @@ def _generate_single_path(
         current_liquid = max(0.0, current_liquid - quarterly_spend)
         current_nav = max(0.0, current_nav - quarterly_spend)
 
-        # Add PE calls (if any) — reduce liquid NAV
-        for pe_sleeve, commitment in base_pe_commitments.items():
-            if pe_sleeve in config.call_scenarios:
-                calls = generator.generate_call_path(pe_sleeve, commitment, path_id)
-                quarterly_call = calls[q] if q < len(calls) else 0.0
-                current_liquid = max(0.0, current_liquid - quarterly_call)
-                current_nav = max(0.0, current_nav - quarterly_call)
+        # Deduct PE calls (if any) — reduce liquid NAV
+        quarterly_call = total_calls_by_quarter[q]
+        current_liquid = max(0.0, current_liquid - quarterly_call)
+        current_nav = max(0.0, current_nav - quarterly_call)
 
         nav_by_quarter[q] = current_nav
         liquid_nav_by_quarter[q] = current_liquid
@@ -233,6 +241,11 @@ def _generate_single_path(
             coverage_by_quarter[q] = current_liquid / monthly_spend
         else:
             coverage_by_quarter[q] = float("inf")
+
+    # Closed-form reserve this path would have needed to avoid any breach.
+    required_liquid = _required_initial_liquid_nav(
+        returns, spending_by_quarter, total_calls_by_quarter, breach_threshold
+    )
 
     # Identify breaches
     breached_quarters = [q for q in range(horizon) if coverage_by_quarter[q] < breach_threshold]
@@ -263,6 +276,7 @@ def _generate_single_path(
         cumulative_return_pct=cumulative_return,
         max_drawdown_pct=max_dd,
         drawdown_quarters=dd_quarters,
+        required_initial_liquid_nav=required_liquid,
     )
 
 
@@ -285,45 +299,75 @@ def _compute_max_drawdown(nav_series: np.ndarray) -> tuple[float, int]:
     return float(max_dd), int(duration)
 
 
-def _compute_required_reserves(
+def _required_initial_liquid_nav(
+    returns: np.ndarray,
+    spending_by_quarter: np.ndarray,
+    calls_by_quarter: np.ndarray,
+    breach_threshold: float,
+) -> float:
+    """Closed-form minimum initial liquid NAV that avoids any coverage breach.
+
+    Before the non-negativity floor (which only binds once a path is already
+    breaching), liquid NAV evolves as
+    ``liq[q] = liq[q-1]*(1+r[q]) - spend[q] - call[q]`` with ``liq[-1] = L``,
+    which unrolls to ``liq[q] = L*G[q] - D[q]`` where ``G[q] = prod_{k<=q}(1+r[k])``
+    and ``D[q] = D[q-1]*(1+r[q]) + spend[q] + call[q]``.
+
+    Coverage is ``liq[q] / (spend[q]/4)``; a breach is coverage < threshold,
+    i.e. ``L*G[q] - D[q] < threshold * spend[q]/4``. Solving each quarter for
+    the smallest ``L`` that clears the bar and taking the max over quarters
+    gives the reserve. Quarters with zero spend impose no constraint (coverage
+    is infinite). Returns ``inf`` when a binding quarter has a non-positive
+    gross factor ``G[q]`` — the portfolio is wiped out and no finite reserve
+    suffices.
+
+    The floor is ignored deliberately: at ``L`` >= the returned reserve the
+    liquid balance stays at or above the (positive) coverage bar in every
+    binding quarter, so flooring never triggers. This makes the estimate at
+    worst marginally conservative, which is the safe direction for a reserve.
+    """
+    horizon = len(returns)
+    gross_factor = 1.0
+    outflow_compounded = 0.0
+    required = 0.0
+    for q in range(horizon):
+        gross_factor *= 1.0 + returns[q]
+        outflow_compounded = (
+            outflow_compounded * (1.0 + returns[q])
+            + spending_by_quarter[q]
+            + calls_by_quarter[q]
+        )
+        spend = spending_by_quarter[q]
+        if spend <= 0.0:
+            continue  # coverage infinite; no constraint this quarter
+        target_liquid = breach_threshold * spend / 4.0
+        if gross_factor <= 0.0:
+            return float("inf")
+        required = max(required, (outflow_compounded + target_liquid) / gross_factor)
+    return required
+
+
+def _aggregate_required_reserves(
     paths: list[MonteCarloPathResult],
     confidence_levels: list[float],
-    breach_threshold: float,
-    initial_liquid_nav: float,
 ) -> tuple[float, float, float]:
-    """Estimate required liquid NAV for specified confidence levels.
+    """Reserve per confidence level = empirical quantile of per-path reserves.
 
-    Simple approach: find the liquid NAV level where breach probability
-    drops below (1 - confidence_level).
+    ``required_liquid_nav_<C>pct_confidence`` is the smallest initial liquid
+    NAV that covers a fraction ``C`` of paths without breach — i.e. the
+    C-quantile of each path's ``required_initial_liquid_nav``. Uses the
+    ``higher`` order statistic so the reported reserve genuinely achieves at
+    least ``C`` coverage rather than interpolating below it.
     """
-    reserves = {}
+    reqs = np.array([p.required_initial_liquid_nav for p in paths], dtype=float)
 
-    for conf_level in confidence_levels:
-        target_no_breach_prob = conf_level
-
-        # Count paths with breach at each confidence level
-        # Simplified: use the observed breach probability as proxy
-        total_breach_prob = sum(1 for path in paths if path.breached_quarters) / len(paths)
-
-        if total_breach_prob <= (1.0 - target_no_breach_prob):
-            # Already at target: no additional reserve needed
-            required = 0.0
-        else:
-            # Simple scaling: breach_prob ∝ 1/liquid_nav (approx)
-            # So required_nav = initial_nav * (breach_prob / target_breach_prob)
-            target_breach_prob = 1.0 - target_no_breach_prob
-            if target_breach_prob > 0:
-                scaling = total_breach_prob / target_breach_prob
-                required = initial_liquid_nav * (scaling - 1.0)
-            else:
-                required = initial_liquid_nav * 2.0  # safety margin
-
-        reserves[conf_level] = max(0.0, required)
+    def quantile(conf_level: float) -> float:
+        return float(np.percentile(reqs, conf_level * 100.0, method="higher"))
 
     return (
-        reserves.get(0.80, 0.0),
-        reserves.get(0.90, 0.0),
-        reserves.get(0.95, 0.0),
+        quantile(0.80) if 0.80 in confidence_levels else 0.0,
+        quantile(0.90) if 0.90 in confidence_levels else 0.0,
+        quantile(0.95) if 0.95 in confidence_levels else 0.0,
     )
 
 
