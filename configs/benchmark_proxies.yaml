@@ -1,0 +1,20 @@
+# Benchmark proxies for empirical CMA calibration (aa_model.assumptions.benchmark_calibration).
+#
+# Maps each allocation bucket to a public benchmark in the Morningstar data feed
+# (morningstar_feed / C:\Projects\morningstar). Used ONLY by the optional
+# empirical-calibration adapter and scripts/calibrate_cma_from_benchmarks.py —
+# production CMAs still come from configs/cma.yaml. Names may be feed aliases
+# (e.g. "sp500", "agg", "t-bill") or canonical benchmark names.
+#
+# Buckets must be a subset of configs/cma.yaml. A bucket with no sensible public
+# proxy (pe_buyout) is intentionally omitted — it is calibrated separately
+# (Phase 23 PE) and preserved from cma.yaml on overlay.
+
+lookback_years: 5
+annualization_factor: 252
+
+proxies:
+  cash:          "State Street SPDR Blmbg 1-3Mth T-Bill ETF"
+  public_bond:   "Bloomberg US Agg Bond TR USD"
+  public_equity: "S&P 500 TR USD"
+  # pe_buyout: no public benchmark proxy — see cma.yaml / Phase 23 PE calibration.
