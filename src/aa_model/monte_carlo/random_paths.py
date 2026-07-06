@@ -6,6 +6,7 @@ Uses numpy.default_rng(seed) for reproducibility.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 
 import numpy as np
@@ -145,8 +146,13 @@ class RandomPathGenerator:
     def _seed_for_path(self, path_id: int, scenario_name: str) -> int:
         """Derive reproducible seed for (path_id, scenario_name) pair.
 
-        Same base seed + same path_id + same scenario → same sequence.
-        Different path_id or scenario → different sequence.
+        Same base seed + same path_id + same scenario → same sequence,
+        byte-stable across processes and machines. Different path_id or
+        scenario → different sequence.
+
+        Uses SHA256 rather than the builtin ``hash()`` because CPython
+        salts string hashing per process (``PYTHONHASHSEED``), which would
+        make seeded replays diverge across runs and break the audit trail.
 
         Parameters
         ----------
@@ -165,10 +171,10 @@ class RandomPathGenerator:
             import random
             return random.randint(0, 2**31 - 1)
 
-        # Deterministic: combine base seed with path + scenario
+        # Deterministic and cross-process stable: SHA256 of the combined key.
         combined = f"{self.config.random_seed}|{path_id}|{scenario_name}"
-        hash_val = hash(combined) & 0x7FFFFFFF  # keep positive, fit in 32-bit
-        return hash_val
+        digest = hashlib.sha256(combined.encode()).digest()
+        return int.from_bytes(digest[:4], "big")  # 32-bit seed in [0, 2^32)
 
 
 def zero_volatility_path(annual_return: float, annual_spend: float, horizon_quarters: int) -> dict[str, np.ndarray]:

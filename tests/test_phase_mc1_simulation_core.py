@@ -383,3 +383,30 @@ def test_compute_monte_carlo_rejects_liquid_greater_than_total() -> None:
             initial_liquid_nav=600_000,  # Exceeds total
             annual_spend=50_000,
         )
+
+
+# ---- Cross-process seed stability -----------------------------------------
+
+
+def test_seed_derivation_is_cross_process_stable(synthetic_config: MonteCarloConfig) -> None:
+    """Per-path seed must be byte-stable across processes/machines.
+
+    Pinned to a golden literal so any regression to the builtin ``hash()``
+    (which CPython salts per process via PYTHONHASHSEED) is caught: a salted
+    hash produces a value that varies run-to-run and cannot match a constant.
+    Golden values are the SHA256-derived 32-bit seeds for seed=12345.
+    """
+    from aa_model.monte_carlo.random_paths import RandomPathGenerator
+
+    gen = RandomPathGenerator(synthetic_config)
+
+    # Golden values computed once; must never change without an intentional
+    # bump (changing them invalidates every prior seeded replay).
+    assert gen._seed_for_path(0, "public_equity") == 2_760_684_285
+    assert gen._seed_for_path(0, "base") == 2_748_845_562
+    assert gen._seed_for_path(3, "pe_buyout") == 3_838_640_276
+
+    # Distinct (path_id, scenario) keys must not collide.
+    keys = [(0, "public_equity"), (0, "base"), (1, "public_equity"), (3, "pe_buyout")]
+    seeds = [gen._seed_for_path(pid, name) for pid, name in keys]
+    assert len(set(seeds)) == len(seeds)
