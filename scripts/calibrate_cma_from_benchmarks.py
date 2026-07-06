@@ -55,7 +55,7 @@ def main() -> None:
     print(f"{'bucket':16}{'proxy':44}{'vol emp':>9}{'vol cma':>9}{'ret ann':>9}")
     for b in m.vol_annual.index:
         cma_v = base_vol.get(b)
-        cma_s = f"{cma_v:.3f}" if isinstance(cma_v, (int, float)) else "   -"
+        cma_s = f"{cma_v:.3f}" if isinstance(cma_v, int | float) else "   -"
         print(f"{b:16}{proxies[b][:42]:44}{m.vol_annual[b]:>9.3f}{cma_s:>9}{m.return_annual[b]:>9.3f}")
     print("\nCorrelation (empirical):")
     print(m.corr.round(3).to_string())
