@@ -1,0 +1,566 @@
+# Morningstar Direct index universe for the Asset Allocation Study Model.
+#
+# Defines the index basket ingested by scripts/import_morningstar_index_returns.py
+# (module: aa_model.ingestion.morningstar_returns). Each entry maps a Morningstar
+# Direct "Common Indices" export row (matched on `display_name`, byte-exact) to a
+# stable internal `index_key`, plus the metadata needed to bridge the series to the
+# model's asset classes, CMA calibration, and study exhibits.
+#
+# CONTRACT
+#   * `index_key`         stable internal slug (snake_case); the join key everywhere.
+#   * `display_name`      MUST equal the Morningstar Direct row name byte-for-byte.
+#   * `morningstar_id`    nullable until confirmed from an approved Morningstar source.
+#   * `morningstar_symbol`nullable until confirmed. DO NOT GUESS vendor identifiers.
+#   * `return_type`       total_return | net_return | price_return | unknown.
+#   * `frequency`         monthly | quarterly_or_monthly_source.
+#   * `model_role`        benchmark | capital_market_assumption | stress_proxy |
+#                         reporting_only | sector_proxy | credit_proxy | cash_proxy |
+#                         muni_credit_proxy | private_real_estate_proxy | custom_proxy.
+#
+# The initial basket is the 36-row `Common Indices` tab of
+# "Index Returns - June 30 2026.xlsx". Vendor IDs are intentionally left null.
+
+provider_default: "Morningstar Direct"
+source_workbook: "Index Returns - June 30 2026.xlsx"
+source_sheet: "Common Indices"
+
+indices:
+  - index_key: bloomberg_commodity_tr_usd
+    display_name: "Bloomberg Commodity TR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Real Assets"
+    sub_asset_class: "Commodities"
+    region: "Global"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: ""
+
+  - index_key: bloomberg_global_aggregate_tr_hdg_usd
+    display_name: "Bloomberg Global Aggregate TR Hdg USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Fixed Income"
+    sub_asset_class: "Global Aggregate Bonds Hedged"
+    region: "Global"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: ""
+
+  - index_key: bloomberg_global_aggregate_tr_usd
+    display_name: "Bloomberg Global Aggregate TR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Fixed Income"
+    sub_asset_class: "Global Aggregate Bonds Unhedged"
+    region: "Global"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: ""
+
+  - index_key: bloomberg_us_agg_bond_tr_usd
+    display_name: "Bloomberg US Agg Bond TR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Fixed Income"
+    sub_asset_class: "US Core Bonds"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: ""
+
+  - index_key: bloomberg_us_corporate_high_yield_tr_usd
+    display_name: "Bloomberg US Corporate High Yield TR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Fixed Income"
+    sub_asset_class: "US High Yield"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: ""
+
+  - index_key: credit_suisse_hedge_fund_usd
+    display_name: "Credit Suisse Hedge Fund USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Alternatives"
+    sub_asset_class: "Hedge Funds Broad"
+    region: "Global"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: "Reports on a lag; expect a stale Return Date relative to the equity basket."
+
+  - index_key: ftse_nareit_composite_tr
+    display_name: "FTSE Nareit Composite TR"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Real Assets"
+    sub_asset_class: "US REITs"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: ""
+
+  - index_key: ftse_nareit_eqty_apartments_tr
+    display_name: "FTSE Nareit Eqty Apartments TR"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Real Assets"
+    sub_asset_class: "US Apartment REITs"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "sector_proxy"
+    notes: ""
+
+  - index_key: msci_acwi_ex_usa_nr_usd
+    display_name: "MSCI ACWI Ex USA NR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Equity"
+    sub_asset_class: "Global ex-US Equity"
+    region: "Global ex-US"
+    currency: "USD"
+    return_type: "net_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: "NR (net) series; treated as total return net of withholding taxes."
+
+  - index_key: msci_acwi_nr_usd
+    display_name: "MSCI ACWI NR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Equity"
+    sub_asset_class: "Global Equity"
+    region: "Global"
+    currency: "USD"
+    return_type: "net_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: ""
+
+  - index_key: msci_eafe_nr_usd
+    display_name: "MSCI EAFE NR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Equity"
+    sub_asset_class: "Developed ex-US Equity"
+    region: "Developed ex-US"
+    currency: "USD"
+    return_type: "net_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: ""
+
+  - index_key: msci_em_nr_usd
+    display_name: "MSCI EM NR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Equity"
+    sub_asset_class: "Emerging Markets Equity"
+    region: "Emerging Markets"
+    currency: "USD"
+    return_type: "net_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: ""
+
+  - index_key: ncreif_apartment
+    display_name: "NCREIF Apartment"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Real Estate"
+    sub_asset_class: "Private Apartment Real Estate"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "quarterly_or_monthly_source"
+    preferred_start_date: null
+    model_role: "private_real_estate_proxy"
+    notes: "Quarterly source; 1 Mo return is typically blank. No monthly interpolation applied."
+
+  - index_key: ncreif_property
+    display_name: "NCREIF Property"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Real Estate"
+    sub_asset_class: "Private Core Real Estate"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "quarterly_or_monthly_source"
+    preferred_start_date: null
+    model_role: "private_real_estate_proxy"
+    notes: "Quarterly source; 1 Mo return is typically blank. No monthly interpolation applied."
+
+  - index_key: russell_1000_growth_tr_usd
+    display_name: "Russell 1000 Growth TR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Equity"
+    sub_asset_class: "US Large Growth"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: ""
+
+  - index_key: russell_1000_tr_usd
+    display_name: "Russell 1000 TR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Equity"
+    sub_asset_class: "US Large Cap"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: ""
+
+  - index_key: russell_1000_value_tr_usd
+    display_name: "Russell 1000 Value TR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Equity"
+    sub_asset_class: "US Large Value"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: ""
+
+  - index_key: russell_2000_growth_tr_usd
+    display_name: "Russell 2000 Growth TR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Equity"
+    sub_asset_class: "US Small Growth"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: ""
+
+  - index_key: russell_2000_tr_usd
+    display_name: "Russell 2000 TR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Equity"
+    sub_asset_class: "US Small Cap"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: ""
+
+  - index_key: russell_2000_value_tr_usd
+    display_name: "Russell 2000 Value TR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Equity"
+    sub_asset_class: "US Small Value"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: ""
+
+  - index_key: russell_2500_tr_usd
+    display_name: "Russell 2500 TR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Equity"
+    sub_asset_class: "US SMID Cap"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: ""
+
+  - index_key: russell_2500_value_tr_usd
+    display_name: "Russell 2500 Value TR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Equity"
+    sub_asset_class: "US SMID Value"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: ""
+
+  - index_key: russell_3000_growth_tr_usd
+    display_name: "Russell 3000 Growth TR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Equity"
+    sub_asset_class: "US Broad Growth"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: ""
+
+  - index_key: russell_3000_tr_usd
+    display_name: "Russell 3000 TR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Equity"
+    sub_asset_class: "US Total Market"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: ""
+
+  - index_key: russell_3000_value_tr_usd
+    display_name: "Russell 3000 Value TR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Equity"
+    sub_asset_class: "US Broad Value"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: ""
+
+  - index_key: sp_500_tr_usd
+    display_name: "S&P 500 TR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Equity"
+    sub_asset_class: "US Large Cap"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: ""
+
+  - index_key: sp_ubs_leveraged_loan_usd
+    display_name: "S&P UBS Leveraged Loan USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Fixed Income"
+    sub_asset_class: "Leveraged Loans"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "credit_proxy"
+    notes: "Return Date has historically lagged; watch for STALE_SERIES."
+
+  - index_key: state_street_spdr_sp_biotech_etf
+    display_name: "State Street® SPDR® S&P® Biotech ETF"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Equity"
+    sub_asset_class: "Biotech Equity"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "sector_proxy"
+    notes: "ETF, not an index; do not use as a primary asset-class benchmark."
+
+  - index_key: state_street_spdr_blmbg_1_3mth_t_bill_etf
+    display_name: "State Street® SPDR® Blmbg1-3MthT-BillETF"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Cash"
+    sub_asset_class: "Treasury Bills"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "cash_proxy"
+    notes: "ETF used as the cash / T-bill proxy."
+
+  - index_key: kbw_nasdaq_bank_tr_usd
+    display_name: "KBW Nasdaq Bank TR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Equity"
+    sub_asset_class: "US Banks"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "sector_proxy"
+    notes: ""
+
+  - index_key: galene_credit_fund_proxy_returns
+    display_name: "Galene Credit Fund [Proxy Returns]"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Alternatives"
+    sub_asset_class: "Private Credit Proxy"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "custom_proxy"
+    notes: "CUSTOM PROXY — not a market index. Requires explicit approval before use in CMA calibration."
+
+  - index_key: bloomberg_us_govt_credit_1_5_yr_tr_usd
+    display_name: "Bloomberg US Govt/Credit 1-5 Yr TR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Fixed Income"
+    sub_asset_class: "Short-Intermediate Government/Credit"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "benchmark"
+    notes: ""
+
+  - index_key: bloomberg_hy_muni_tr_usd
+    display_name: "Bloomberg HY Muni TR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Fixed Income"
+    sub_asset_class: "High Yield Municipal Bonds"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "muni_credit_proxy"
+    notes: ""
+
+  - index_key: roundhill_magnificent_seven_etf
+    display_name: "Roundhill Magnificent Seven ETF"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Equity"
+    sub_asset_class: "Magnificent Seven Equity"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "sector_proxy"
+    notes: "ETF with short history; expect blank long-horizon (5Y/10Y) returns."
+
+  - index_key: bloomberg_us_leveraged_loan_insur_tr_usd
+    display_name: "Bloomberg US Leveraged Loan Insur TR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Fixed Income"
+    sub_asset_class: "Leveraged Loans"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "credit_proxy"
+    notes: "Preferred leveraged-loan benchmark if history is cleaner than S&P UBS Leveraged Loan."
+
+  - index_key: russell_magnificent_7_tr_usd
+    display_name: "Russell Magnificent 7 TR USD"
+    provider: "Morningstar Direct"
+    morningstar_id: null
+    morningstar_symbol: null
+    asset_class: "Equity"
+    sub_asset_class: "Magnificent Seven Equity"
+    region: "United States"
+    currency: "USD"
+    return_type: "total_return"
+    frequency: "monthly"
+    preferred_start_date: null
+    model_role: "sector_proxy"
+    notes: "Short history; expect blank long-horizon returns."
