@@ -27,7 +27,9 @@ allocation:
   config: configs/public_allocation.yaml
 
 implementation:
-  engine: stub
+  # engine intentionally omitted -> defaults to "stub" (ImplementationRefConfig).
+  # Keeping it implicit leaves the allocation block above as the only line the
+  # CI riskfolio-e2e sed override can match.
   bps_per_trade: 0.0
 
 cma:
