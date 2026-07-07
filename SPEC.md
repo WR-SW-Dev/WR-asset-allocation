@@ -349,3 +349,45 @@ Use this prompt to start the build. Do not enlarge it.
 - Web UI.
 
 Anything above requires a spec amendment before implementation.
+
+---
+
+## Spec Amendment 2026-07-07 — Entity dimension (Phase 24)
+
+Amends §1 scope and §5 data contracts to add a first-class **entity**
+dimension so the Wake Robin study reproduces per entity. Full design in
+`docs/phase_24_entity_study_design_lock.md`. This amendment authorizes the
+deviation; it does **not** weaken any §2 principle.
+
+**Scope added.** The package gains an entity dimension: an `EntityFixture`
+(deterministic snapshot of one entity's perimeter, account scope,
+balance-sheet segmentation, and PE commitment exposure) plus study lens
+reducers over it. A single entity per study (no consolidation).
+
+**New data contracts** (`src/aa_model/entity/`, package own schemas — not a
+refactor of `io/schemas.py`):
+
+- `EntityFixture` — `entity_id`, `as_of_date`, `fixture_version`, `accounts`
+  (reuses the Phase-15 `AccountRecord`), `segments`, `pe_exposure`, optional
+  `expected_total_nav_usd` control total. Money is `Decimal` for exact
+  reconciliation; conversion to `float` only at engine boundaries.
+- `BalanceSheetSegmentRecord` — encodes the load-bearing PROJECT_SCOPE
+  principle *NAV ≠ liquidity*: investable segments carry one of the seven
+  Wake Robin policy classes; structural NAV never carries a policy class and
+  is never in the investable base.
+- `PECommitmentExposureRecord` — aligned subset of the Phase-23 commitment
+  book. Cumulative called (paid-in) MAY exceed commitment (recallable
+  capital); `unfunded` is a floor-0 quantity = `max(0, commitment - called)`.
+- `EntityPolicyConfig` — strategic targets per policy class (sum to 1.0
+  within tolerance).
+
+**Determinism (§8 upheld).** `content_hash` over an order-independent
+canonical serialization folds into `config_hash`; no wall-clock reads (sole
+anchor: `as_of_date`).
+
+**Privacy.** Committed artifacts are methodology only. Real entity fixtures
+live gitignored under `data/external/`; committed fixtures are synthetic.
+
+**Gating unchanged.** Design-lock-before-implementation and phase gates
+(§6) still apply; the entity study composes existing Phase 12–23 layers and
+does not alter any default-fixture run (byte-stable).
