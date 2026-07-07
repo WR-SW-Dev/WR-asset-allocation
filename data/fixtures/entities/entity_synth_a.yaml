@@ -35,6 +35,19 @@ segments:
   - {segment_key: str_nested_opco, segment: nested_opco_equity, amount_usd: "4000000.00"}
   - {segment_key: str_life_ins, segment: life_insurance_csv, amount_usd: "1000000.00"}
 
+# position-level holdings backing the equity + cash investable segments
+# (partial coverage — other classes have no line items, which is allowed).
+holdings:
+  - {holding_key: h_eq1, account_id: acct_synth_brokerage, policy_class: equity, asset_class: public_equity, market_value_usd: "2500000.00", liquidity_tier: daily}
+  - {holding_key: h_eq2, account_id: acct_synth_brokerage, policy_class: equity, asset_class: public_equity, market_value_usd: "1500000.00", liquidity_tier: daily}
+  - {holding_key: h_cash1, account_id: acct_synth_brokerage, policy_class: cash_and_cash_alts, asset_class: cash_equivalent, market_value_usd: "11000000.00", liquidity_tier: daily}
+
+# quarterly liquidity cash-flow projection (roll-forward chain; ending_q == beginning_{q+1})
+liquidity_projection:
+  - {period: "2026Q1", beginning_usd: "11000000.00", total_inflows_usd: "500000.00", total_outflows_usd: "800000.00", ending_usd: "10700000.00"}
+  - {period: "2026Q2", beginning_usd: "10700000.00", total_inflows_usd: "500000.00", total_outflows_usd: "900000.00", ending_usd: "10300000.00"}
+  - {period: "2026Q3", beginning_usd: "10300000.00", total_inflows_usd: "400000.00", total_outflows_usd: "1000000.00", ending_usd: "9700000.00"}
+
 pe_exposure:
   - fund_key: fund_synth_pe1
     entity_id: entity_synth_a

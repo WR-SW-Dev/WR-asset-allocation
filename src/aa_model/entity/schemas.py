@@ -34,12 +34,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-# Reuse the Phase 15 normalized account record — account scope is the same
-# concept; no duplicate model.
-from aa_model.ingestion.schemas_position import AccountRecord
+# Reuse the Phase 15 normalized account record + asset-class taxonomy —
+# account scope and holdings are the same concepts; no duplicate models.
+from aa_model.ingestion.schemas_position import _ASSET_CLASS_LITERAL, AccountRecord
 
 _STRICT = ConfigDict(extra="forbid")
 _URL_SAFE_RE = _re.compile(r"^[A-Za-z0-9_\-\.]+$")
+_QUARTER_RE = _re.compile(r"^\d{4}Q[1-4]$")
 
 # Reconciliation tolerance for Decimal control-total checks (1 cent).
 _RECON_TOLERANCE = Decimal("0.01")
@@ -213,6 +214,87 @@ class PECommitmentExposureRecord(BaseModel):
         return self
 
 
+class HoldingRecord(BaseModel):
+    """One position-level holding backing the investable base.
+
+    Holdings roll up to the investable balance-sheet segments by
+    `policy_class`; the holdings-detail lens reconciles Σ holding value per
+    class to the corresponding investable segment. `asset_class` (the finer
+    Phase-15 taxonomy) is carried for grouping/reporting.
+    """
+
+    model_config = _STRICT
+
+    holding_key: str  # URL-safe, unique within a fixture
+    account_id: str
+    policy_class: _POLICY_CLASS_LITERAL
+    asset_class: _ASSET_CLASS_LITERAL = "other"
+    market_value_usd: Decimal
+    manager_id: str | None = None
+    liquidity_tier: _LIQUIDITY_TIER_LITERAL | None = None
+
+    @field_validator("holding_key")
+    @classmethod
+    def _key_url_safe(cls, v: str) -> str:
+        if not _URL_SAFE_RE.match(v):
+            raise ValueError(f"holding_key must be URL-safe; got {v!r}")
+        return v
+
+    @field_validator("market_value_usd")
+    @classmethod
+    def _mv_non_negative_finite(cls, v: Decimal) -> Decimal:
+        if not v.is_finite():
+            raise ValueError(f"market_value_usd must be finite; got {v}")
+        if v < 0:
+            raise ValueError(
+                f"market_value_usd must be >= 0 (holdings are stocks of value); got {v}"
+            )
+        return v
+
+
+class QuarterProjectionRecord(BaseModel):
+    """One quarter of the liquidity projection.
+
+    Roll-forward invariant: `ending == beginning + inflows - outflows` within
+    tolerance. `period` is a `YYYYQ[1-4]` label. Chain continuity (ending_q ==
+    beginning_{q+1}) is enforced at the fixture level.
+    """
+
+    model_config = _STRICT
+
+    period: str
+    beginning_usd: Decimal
+    total_inflows_usd: Decimal = Decimal("0")
+    total_outflows_usd: Decimal = Decimal("0")
+    ending_usd: Decimal
+
+    @field_validator("period")
+    @classmethod
+    def _period_well_formed(cls, v: str) -> str:
+        if not _QUARTER_RE.match(v):
+            raise ValueError(f"period must match YYYYQ[1-4]; got {v!r}")
+        return v
+
+    @field_validator("total_inflows_usd", "total_outflows_usd")
+    @classmethod
+    def _flow_non_negative_finite(cls, v: Decimal) -> Decimal:
+        if not v.is_finite():
+            raise ValueError(f"flow must be finite; got {v}")
+        if v < 0:
+            raise ValueError(f"flow must be >= 0 (use the other side for sign); got {v}")
+        return v
+
+    @model_validator(mode="after")
+    def _roll_forward(self) -> QuarterProjectionRecord:
+        implied = self.beginning_usd + self.total_inflows_usd - self.total_outflows_usd
+        if abs(self.ending_usd - implied) > _RECON_TOLERANCE:
+            raise ValueError(
+                f"period={self.period!r}: ending_usd ({self.ending_usd}) != "
+                f"beginning + inflows - outflows ({implied})"
+            )
+        return self
+
+
 class EntityFixture(BaseModel):
     """Deterministic snapshot of one entity's perimeter, account scope,
     balance-sheet segmentation, and PE commitment exposure.
@@ -230,6 +312,10 @@ class EntityFixture(BaseModel):
     accounts: list[AccountRecord] = Field(default_factory=list)
     segments: list[BalanceSheetSegmentRecord] = Field(default_factory=list)
     pe_exposure: list[PECommitmentExposureRecord] = Field(default_factory=list)
+    # Optional position-level holdings backing the investable base.
+    holdings: list[HoldingRecord] = Field(default_factory=list)
+    # Optional quarterly liquidity cash-flow projection (roll-forward chain).
+    liquidity_projection: list[QuarterProjectionRecord] = Field(default_factory=list)
     # Optional balance-sheet control total (e.g. from the custodian/Archway
     # recon). When set, Σ(segments) must match within tolerance — fail-loud.
     expected_total_nav_usd: Decimal | None = None
@@ -279,6 +365,33 @@ class EntityFixture(BaseModel):
                     f"PE fund {fund.fund_key!r} has entity_id "
                     f"{fund.entity_id!r} outside this fixture's perimeter "
                     f"({self.entity_id!r})"
+                )
+        # Holdings: unique keys; every account_id must be in scope (when
+        # accounts are enumerated).
+        seen_holdings: set[str] = set()
+        scoped_accounts = {a.account_id for a in self.accounts}
+        for h in self.holdings:
+            if h.holding_key in seen_holdings:
+                raise ValueError(f"Duplicate holding_key: {h.holding_key!r}")
+            seen_holdings.add(h.holding_key)
+            if scoped_accounts and h.account_id not in scoped_accounts:
+                raise ValueError(
+                    f"holding {h.holding_key!r} references account "
+                    f"{h.account_id!r} not in account scope"
+                )
+        # Liquidity projection: unique quarters + roll-forward chain continuity
+        # (each quarter's ending == the next quarter's beginning).
+        seen_periods: set[str] = set()
+        for rec in self.liquidity_projection:
+            if rec.period in seen_periods:
+                raise ValueError(f"Duplicate projection period: {rec.period!r}")
+            seen_periods.add(rec.period)
+        ordered = sorted(self.liquidity_projection, key=lambda r: r.period)
+        for prev, nxt in zip(ordered, ordered[1:], strict=False):
+            if abs(prev.ending_usd - nxt.beginning_usd) > _RECON_TOLERANCE:
+                raise ValueError(
+                    f"projection chain break at {nxt.period!r}: previous ending "
+                    f"({prev.ending_usd}) != beginning ({nxt.beginning_usd})"
                 )
         # Balance-sheet reconciliation against the optional control total.
         if self.expected_total_nav_usd is not None:

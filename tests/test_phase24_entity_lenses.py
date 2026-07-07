@@ -13,7 +13,9 @@ from aa_model.entity import (
     EntityPolicyConfig,
     allocation_vs_target_lens,
     balance_sheet_lens,
+    holdings_detail_lens,
     liquidity_lens,
+    liquidity_projection_lens,
     load_entity_fixture,
     load_entity_policy,
 )
@@ -200,3 +202,148 @@ def test_structural_segment_forbids_liquidity_tier() -> None:
                 ],
             }
         )
+
+
+# ---- holdings detail -------------------------------------------------------
+
+
+def test_holdings_detail_reconciles_to_segments(synth_fixture: EntityFixture) -> None:
+    hd = holdings_detail_lens(synth_fixture)
+    groups = {g.policy_class: g for g in hd.groups}
+    # equity: two line items summing to the $4M investable segment
+    assert groups["equity"].subtotal_usd == Decimal("4000000.00")
+    assert groups["equity"].segment_usd == Decimal("4000000.00")
+    assert groups["equity"].reconciles
+    assert len(groups["equity"].holdings) == 2
+    # cash: single $11M line item reconciles
+    assert groups["cash_and_cash_alts"].reconciles
+    # class with a segment but no line items → not a break (partial coverage)
+    assert groups["fixed_income"].holdings == []
+    assert groups["fixed_income"].reconciles
+    # total covers only the classes with holdings
+    assert hd.total_usd == Decimal("15000000.00")
+
+
+def test_holdings_detail_flags_reconciliation_break() -> None:
+    fx = EntityFixture.model_validate(
+        {
+            "fixture_version": "t",
+            "entity_id": "e1",
+            "as_of_date": "2026-04-30",
+            "segments": [
+                {
+                    "segment_key": "s1",
+                    "segment": "investable",
+                    "policy_class": "equity",
+                    "amount_usd": "1000000",
+                }
+            ],
+            "holdings": [
+                {
+                    "holding_key": "h1",
+                    "account_id": "a1",
+                    "policy_class": "equity",
+                    "asset_class": "public_equity",
+                    "market_value_usd": "900000",
+                }
+            ],
+        }
+    )
+    grp = {g.policy_class: g for g in holdings_detail_lens(fx).groups}["equity"]
+    assert grp.reconciles is False
+    assert grp.delta_usd == Decimal("-100000")
+
+
+def test_holding_account_outside_scope_raises() -> None:
+    with pytest.raises(ValidationError, match="not in account scope"):
+        EntityFixture.model_validate(
+            {
+                "fixture_version": "t",
+                "entity_id": "e1",
+                "as_of_date": "2026-04-30",
+                "accounts": [
+                    {"account_id": "a1", "entity_id": "e1", "valuation_date": "2026-04-30"}
+                ],
+                "holdings": [
+                    {
+                        "holding_key": "h1",
+                        "account_id": "a_other",
+                        "policy_class": "equity",
+                        "asset_class": "public_equity",
+                        "market_value_usd": "100",
+                    }
+                ],
+            }
+        )
+
+
+# ---- liquidity projection --------------------------------------------------
+
+
+def test_liquidity_projection_lens(synth_fixture: EntityFixture) -> None:
+    p = liquidity_projection_lens(synth_fixture)
+    assert p.quarters == 3
+    assert p.period_first == "2026Q1"
+    assert p.period_last == "2026Q3"
+    assert p.beginning_usd == Decimal("11000000.00")
+    assert p.ending_usd == Decimal("9700000.00")
+    assert p.min_ending_usd == Decimal("9700000.00")
+    assert p.min_ending_period == "2026Q3"
+    assert p.goes_negative is False
+    assert [pe[0] for pe in p.trajectory] == ["2026Q1", "2026Q2", "2026Q3"]
+
+
+def test_projection_roll_forward_violation_raises() -> None:
+    with pytest.raises(ValidationError, match="beginning \\+ inflows - outflows"):
+        EntityFixture.model_validate(
+            {
+                "fixture_version": "t",
+                "entity_id": "e1",
+                "as_of_date": "2026-04-30",
+                "liquidity_projection": [
+                    {
+                        "period": "2026Q1",
+                        "beginning_usd": "100",
+                        "total_inflows_usd": "10",
+                        "total_outflows_usd": "5",
+                        "ending_usd": "200",
+                    }  # should be 105
+                ],
+            }
+        )
+
+
+def test_projection_chain_break_raises() -> None:
+    with pytest.raises(ValidationError, match="chain break"):
+        EntityFixture.model_validate(
+            {
+                "fixture_version": "t",
+                "entity_id": "e1",
+                "as_of_date": "2026-04-30",
+                "liquidity_projection": [
+                    {"period": "2026Q1", "beginning_usd": "100", "ending_usd": "100"},
+                    {"period": "2026Q2", "beginning_usd": "999", "ending_usd": "999"},  # != 100
+                ],
+            }
+        )
+
+
+def test_projection_negative_ending_flagged() -> None:
+    fx = EntityFixture.model_validate(
+        {
+            "fixture_version": "t",
+            "entity_id": "e1",
+            "as_of_date": "2026-04-30",
+            "liquidity_projection": [
+                {
+                    "period": "2026Q1",
+                    "beginning_usd": "100",
+                    "total_outflows_usd": "150",
+                    "ending_usd": "-50",
+                },
+            ],
+        }
+    )
+    p = liquidity_projection_lens(fx)
+    assert p.goes_negative is True
+    assert p.min_ending_usd == Decimal("-50")
