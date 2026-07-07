@@ -61,28 +61,36 @@ def _write_normalized(df, out: Path) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--input", required=True, help="Morningstar export (.xlsx/.xlsm/.csv).")
     ap.add_argument("--universe", default=str(_DEFAULT_UNIVERSE), help="Index universe YAML.")
     ap.add_argument("--asset-class-map", default=str(_DEFAULT_MAP), help="Asset-class map YAML.")
     ap.add_argument("--output", default=None, help="Normalized output path (.parquet/.csv).")
     ap.add_argument("--coverage-report", default=None, help="Coverage report CSV path.")
     ap.add_argument("--sheet", default="Common Indices", help="Worksheet name (xlsx only).")
-    ap.add_argument("--asof", default=None, help="As-of date YYYY-MM-DD (default: modal return date).")
+    ap.add_argument(
+        "--asof", default=None, help="As-of date YYYY-MM-DD (default: modal return date)."
+    )
     ap.add_argument(
         "--value-scale",
         choices=["percent", "decimal"],
         default="percent",
         help="Source value units. 'percent' divides by 100 exactly once.",
     )
-    ap.add_argument("--allow-unmapped", action="store_true", help="Permit workbook rows not in the universe.")
+    ap.add_argument(
+        "--allow-unmapped", action="store_true", help="Permit workbook rows not in the universe."
+    )
     ap.add_argument(
         "--allow-missing-configured",
         action="store_true",
         help="Permit configured indices absent from the workbook.",
     )
     grp = ap.add_mutually_exclusive_group()
-    grp.add_argument("--dry-run", action="store_true", default=True, help="Validate only (default).")
+    grp.add_argument(
+        "--dry-run", action="store_true", default=True, help="Validate only (default)."
+    )
     grp.add_argument("--write", dest="write", action="store_true", help="Persist outputs.")
     args = ap.parse_args(argv)
 
@@ -104,7 +112,9 @@ def main(argv: list[str] | None = None) -> int:
     print("=== Morningstar index-return ingestion ===")
     print(json.dumps(result.meta, indent=2))
     if result.unmapped_names:
-        print(f"\n[WARN] {len(result.unmapped_names)} unmapped workbook name(s): {result.unmapped_names}")
+        print(
+            f"\n[WARN] {len(result.unmapped_names)} unmapped workbook name(s): {result.unmapped_names}"
+        )
     if result.missing_configured:
         print(
             f"\n[WARN] {len(result.missing_configured)} configured index/indices missing "
@@ -129,8 +139,10 @@ def main(argv: list[str] | None = None) -> int:
 
     n_stale = int(cov["stale_series"].sum())
     n_absent = int((~cov["present_in_workbook"]).sum())
-    print(f"\nSummary: {len(cov)} indices | stale={n_stale} | absent_from_workbook={n_absent} "
-          f"| normalized_rows={len(result.normalized)}")
+    print(
+        f"\nSummary: {len(cov)} indices | stale={n_stale} | absent_from_workbook={n_absent} "
+        f"| normalized_rows={len(result.normalized)}"
+    )
 
     if args.write:
         if args.output:
