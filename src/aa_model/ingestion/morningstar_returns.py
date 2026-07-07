@@ -254,9 +254,7 @@ def _locate_header(rows: list[list[Any]]) -> tuple[int, str]:
                 if nxt and _parse_date(nxt[0]) is not None:
                     return i, "wide"
 
-    sample = [
-        [_norm_label(c) for c in r][:8] for r in rows[: min(6, len(rows))]
-    ]
+    sample = [[_norm_label(c) for c in r][:8] for r in rows[: min(6, len(rows))]]
     raise MorningstarIngestError(
         "could not detect input layout (morningstar_common_indices / long / wide). "
         f"First rows seen: {sample}. For wide format name column 0 'Date'; for long "
@@ -288,9 +286,7 @@ def _parse_morningstar(rows: list[list[Any]], header_i: int) -> list[_RawObs]:
     date_c = col[RETURN_DATE_HEADER]
     cur_c = col.get(BASE_CURRENCY_HEADER)
     horizon_cols = {
-        h: col[label]
-        for label, h in TOTAL_RETURN_HEADER_TO_HORIZON.items()
-        if label in col
+        h: col[label] for label, h in TOTAL_RETURN_HEADER_TO_HORIZON.items() if label in col
     }
     inv_field = {v: k for k, v in TOTAL_RETURN_HEADER_TO_HORIZON.items()}
 
@@ -424,9 +420,7 @@ def _normalize(
 
     # Determine the ingestion as-of: explicit override, else the modal (most
     # common) non-null observation date among MAPPED rows.
-    mapped_dates = [
-        o.date for o in raws if o.display_name in by_name and o.date is not None
-    ]
+    mapped_dates = [o.date for o in raws if o.display_name in by_name and o.date is not None]
     if asof_date is not None:
         asof = asof_date.normalize()
     elif mapped_dates:
@@ -440,9 +434,7 @@ def _normalize(
         if o.display_name in by_name and o.value_pct is not None:
             long_present.setdefault(o.display_name, set()).add(o.horizon)
     short_history_names = {
-        name
-        for name in long_present
-        if not any(h in long_present[name] for h in _LONG_HORIZONS)
+        name for name in long_present if not any(h in long_present[name] for h in _LONG_HORIZONS)
     }
 
     records: list[dict[str, Any]] = []
@@ -469,7 +461,9 @@ def _normalize(
         value = None if o.value_pct is None else round(o.value_pct * scale, 10)
 
         if value is None:
-            flags.add("MISSING_MONTH" if o.horizon == CANONICAL_MONTHLY_HORIZON else "SHORT_HISTORY")
+            flags.add(
+                "MISSING_MONTH" if o.horizon == CANONICAL_MONTHLY_HORIZON else "SHORT_HISTORY"
+            )
         else:
             if abs(value) > EXTREME_RETURN_THRESHOLD:
                 flags.add("EXTREME_RETURN")
@@ -508,11 +502,14 @@ def _normalize(
     df = pd.DataFrame.from_records(records, columns=list(NORMALIZED_COLUMNS))
     # Second pass: mark BOTH members of any duplicate (index_key,date,horizon).
     if dup_keys:
+
         def _mark(r: pd.Series) -> str:
             d_iso = None if r["date"] is None else pd.Timestamp(r["date"]).date().isoformat()
             k = (r["index_key"], d_iso, r["horizon"])
             if k in dup_keys and "DUPLICATE_DATE" not in str(r["quality_flag"]):
-                base = set() if r["quality_flag"] == "OK" else set(str(r["quality_flag"]).split("|"))
+                base = (
+                    set() if r["quality_flag"] == "OK" else set(str(r["quality_flag"]).split("|"))
+                )
                 base.add("DUPLICATE_DATE")
                 return "|".join(sorted(base))
             return r["quality_flag"]
@@ -568,23 +565,17 @@ def build_coverage_report(
     rows: list[dict[str, Any]] = []
     for entry in universe.indices:
         key = entry.index_key
-        sub = (
-            normalized[normalized["index_key"] == key]
-            if not normalized.empty
-            else normalized
-        )
+        sub = normalized[normalized["index_key"] == key] if not normalized.empty else normalized
         present = entry.display_name in present_names
-        obs_dates = sorted(
-            {r for r in sub["date"].tolist() if r is not None}
-        ) if not sub.empty else []
-        monthly = sub[sub["horizon"] == CANONICAL_MONTHLY_HORIZON] if not sub.empty else sub
-        monthly_valid = (
-            monthly[monthly["return_decimal"].notna()] if not monthly.empty else monthly
+        obs_dates = (
+            sorted({r for r in sub["date"].tolist() if r is not None}) if not sub.empty else []
         )
+        monthly = sub[sub["horizon"] == CANONICAL_MONTHLY_HORIZON] if not sub.empty else sub
+        monthly_valid = monthly[monthly["return_decimal"].notna()] if not monthly.empty else monthly
         return_date = obs_dates[-1] if obs_dates else None
         n_monthly = int(len(monthly_valid))
         all_flags: set[str] = set()
-        for q in (sub["quality_flag"].tolist() if not sub.empty else []):
+        for q in sub["quality_flag"].tolist() if not sub.empty else []:
             if q and q != "OK":
                 all_flags.update(str(q).split("|"))
         stale = "STALE_SERIES" in all_flags or (
@@ -644,7 +635,9 @@ def run_ingestion(
         map_cfg = load_asset_class_map(asset_class_map_path)
         validate_asset_class_map(map_cfg, universe)
 
-    rows, sheet_name = _read_rows(input_path, sheet if input_path.suffix.lower() != ".csv" else None)
+    rows, sheet_name = _read_rows(
+        input_path, sheet if input_path.suffix.lower() != ".csv" else None
+    )
     header_i, layout = _locate_header(rows)
     raws = _PARSERS[layout](rows, header_i)
 
