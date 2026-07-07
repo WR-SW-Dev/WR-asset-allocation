@@ -1,0 +1,12 @@
+# Phase 24 — synthetic strategic policy for entity_synth_a (committed; NO client data).
+# Wake Robin strategic targets, fractions of the investable base, sum = 1.00.
+policy_version: synth_a_policy_v1
+entity_id: entity_synth_a
+targets:
+  re_opco_stabilized: "0.05"
+  real_estate: "0.10"
+  equity: "0.40"
+  private_equity: "0.10"
+  absolute_return: "0.05"
+  fixed_income: "0.25"
+  cash_and_cash_alts: "0.05"
