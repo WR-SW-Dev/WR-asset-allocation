@@ -1,0 +1,54 @@
+# Phase 24 — synthetic entity fixture (committed; NO client data).
+# Exercises all four deterministic dimensions: perimeter, account scope,
+# balance-sheet segmentation (investable vs structural), PE commitment
+# exposure. Amounts are strings so they coerce to Decimal exactly.
+# Investable base = 40,000,000 ; structural NAV = 60,000,000 ; total = 100,000,000.
+fixture_version: synth_a_v1
+entity_id: entity_synth_a
+as_of_date: 2026-04-30
+expected_total_nav_usd: "100000000.00"
+
+accounts:
+  - account_id: acct_synth_brokerage
+    entity_id: entity_synth_a
+    custodian: SynthCustodian
+    account_type: taxable
+    valuation_date: 2026-04-30
+  - account_id: acct_synth_trust
+    entity_id: entity_synth_a
+    custodian: SynthCustodian
+    account_type: trust
+    valuation_date: 2026-04-30
+
+segments:
+  # --- investable financial assets (carry a policy_class) ---
+  - {segment_key: inv_re_opco, segment: investable, policy_class: re_opco_stabilized, amount_usd: "2000000.00"}
+  - {segment_key: inv_real_estate, segment: investable, policy_class: real_estate, amount_usd: "4000000.00"}
+  - {segment_key: inv_equity, segment: investable, policy_class: equity, amount_usd: "4000000.00"}
+  - {segment_key: inv_pe, segment: investable, policy_class: private_equity, amount_usd: "3000000.00"}
+  - {segment_key: inv_abs_return, segment: investable, policy_class: absolute_return, amount_usd: "2000000.00"}
+  - {segment_key: inv_fixed_income, segment: investable, policy_class: fixed_income, amount_usd: "14000000.00"}
+  - {segment_key: inv_cash, segment: investable, policy_class: cash_and_cash_alts, amount_usd: "11000000.00"}
+  # --- personal-use & structural (NO policy_class; never investable) ---
+  - {segment_key: str_personal_use, segment: personal_use, amount_usd: "50000000.00"}
+  - {segment_key: str_note_recv, segment: note_receivable, amount_usd: "5000000.00"}
+  - {segment_key: str_nested_opco, segment: nested_opco_equity, amount_usd: "4000000.00"}
+  - {segment_key: str_life_ins, segment: life_insurance_csv, amount_usd: "1000000.00"}
+
+pe_exposure:
+  - fund_key: fund_synth_pe1
+    entity_id: entity_synth_a
+    policy_class: private_equity
+    commitment_usd: "3000000.00"
+    called_to_date_usd: "2000000.00"
+    distributed_to_date_usd: "500000.00"
+    nav_usd: "2200000.00"
+    unfunded_usd: "1000000.00"
+  - fund_key: fund_synth_pc1
+    entity_id: entity_synth_a
+    policy_class: fixed_income
+    commitment_usd: "2000000.00"
+    called_to_date_usd: "1800000.00"
+    distributed_to_date_usd: "300000.00"
+    nav_usd: "1600000.00"
+    unfunded_usd: "200000.00"
