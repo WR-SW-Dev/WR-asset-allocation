@@ -48,7 +48,17 @@ _MS_HEADER = [
 ]
 
 # column indices in _MS_HEADER for the horizons we assemble in fixtures
-_H = {"1M": 3, "3M": 4, "6M": 5, "1Y": 6, "3Y_ann": 7, "5Y_ann": 8, "10Y_ann": 9, "15Y_ann": 11, "inception_ann": 13}
+_H = {
+    "1M": 3,
+    "3M": 4,
+    "6M": 5,
+    "1Y": 6,
+    "3Y_ann": 7,
+    "5Y_ann": 8,
+    "10Y_ann": 9,
+    "15Y_ann": 11,
+    "inception_ann": 13,
+}
 
 _SUMMARY_ROWS = [
     ["Summary Statistics"] + [None] * 13,
@@ -66,7 +76,9 @@ def _ms_row(name, return_date, currency="US Dollar", **horizons):
     return row
 
 
-def _write_ms_xlsx(path: Path, data_rows, *, n_title_rows=0, with_summary=True, sheet="Common Indices"):
+def _write_ms_xlsx(
+    path: Path, data_rows, *, n_title_rows=0, with_summary=True, sheet="Common Indices"
+):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = sheet
@@ -93,7 +105,9 @@ def _write_csv(path: Path, rows):
 def test_output_schema_matches_expected_columns(tmp_path):
     p = tmp_path / "ms.xlsx"
     _write_ms_xlsx(p, [_ms_row("S&P 500 TR USD", "2026-03-31", **{"1M": -4.98, "10Y_ann": 13.0})])
-    res = run_ingestion(p, universe_path=_UNIVERSE, asset_class_map_path=_MAP, allow_missing_configured=True)
+    res = run_ingestion(
+        p, universe_path=_UNIVERSE, asset_class_map_path=_MAP, allow_missing_configured=True
+    )
     assert list(res.normalized.columns) == list(NORMALIZED_COLUMNS)
 
 
@@ -233,7 +247,9 @@ def test_short_history_missing_multiyear_not_dropped(tmp_path):
     res = run_ingestion(p, universe_path=_UNIVERSE, allow_missing_configured=True)
     idx = res.normalized[res.normalized["index_key"] == "roundhill_magnificent_seven_etf"]
     assert not idx.empty  # not dropped
-    assert trailing_return(res.normalized, "roundhill_magnificent_seven_etf", "1M") == pytest.approx(-0.057)
+    assert trailing_return(
+        res.normalized, "roundhill_magnificent_seven_etf", "1M"
+    ) == pytest.approx(-0.057)
     assert idx["quality_flag"].str.contains("SHORT_HISTORY").any()
 
 
@@ -296,7 +312,9 @@ def test_preserves_exact_display_names(tmp_path):
         run_ingestion(bad, universe_path=_UNIVERSE, allow_missing_configured=True)
 
     ok = tmp_path / "ok.xlsx"
-    _write_ms_xlsx(ok, [_ms_row("  S&P 500 TR USD  ", "2026-03-31", **{"1M": 1.0, "10Y_ann": 13.0})])
+    _write_ms_xlsx(
+        ok, [_ms_row("  S&P 500 TR USD  ", "2026-03-31", **{"1M": 1.0, "10Y_ann": 13.0})]
+    )
     res = run_ingestion(ok, universe_path=_UNIVERSE, allow_missing_configured=True)
     row = res.coverage.set_index("index_key").loc["sp_500_tr_usd"]
     assert row["display_name"] == "S&P 500 TR USD"  # exact, from config
@@ -315,5 +333,7 @@ def test_index_keys_for_asset_class():
     map_cfg = load_asset_class_map(_MAP)
     r = index_keys_for_asset_class(map_cfg, "US Equity - Total Market", "US Total Market")
     assert r["primary_index_key"] == "russell_3000_tr_usd"
-    r2 = index_keys_for_asset_class(map_cfg, "Alternatives - Private Credit", "Private Credit Proxy")
+    r2 = index_keys_for_asset_class(
+        map_cfg, "Alternatives - Private Credit", "Private Credit Proxy"
+    )
     assert r2["requires_approval"] is True
