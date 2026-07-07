@@ -40,8 +40,12 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--lookback", type=int, default=None, help="Lookback years (default: config).")
     ap.add_argument("--as-of", default=None, help="As-of date YYYY-MM-DD (default: feed latest).")
-    ap.add_argument("--with-returns", action="store_true", help="Include trailing returns in candidate.")
-    ap.add_argument("--write", action="store_true", help="Write configs/cma_empirical.yaml candidate.")
+    ap.add_argument(
+        "--with-returns", action="store_true", help="Include trailing returns in candidate."
+    )
+    ap.add_argument(
+        "--write", action="store_true", help="Write configs/cma_empirical.yaml candidate."
+    )
     ap.add_argument("--out", default=None, help="Output path (default configs/cma_empirical.yaml).")
     args = ap.parse_args()
 
@@ -51,12 +55,16 @@ def main() -> None:
     base = yaml.safe_load(_DEFAULT_CMA_CONFIG.read_text(encoding="utf-8")) or {}
     base_vol = base.get("vol_annual", {})
 
-    print(f"Empirical CMA calibration  |  window {m.window[0]} -> {m.window[1]}  |  n={m.n_obs} obs")
+    print(
+        f"Empirical CMA calibration  |  window {m.window[0]} -> {m.window[1]}  |  n={m.n_obs} obs"
+    )
     print(f"{'bucket':16}{'proxy':44}{'vol emp':>9}{'vol cma':>9}{'ret ann':>9}")
     for b in m.vol_annual.index:
         cma_v = base_vol.get(b)
         cma_s = f"{cma_v:.3f}" if isinstance(cma_v, int | float) else "   -"
-        print(f"{b:16}{proxies[b][:42]:44}{m.vol_annual[b]:>9.3f}{cma_s:>9}{m.return_annual[b]:>9.3f}")
+        print(
+            f"{b:16}{proxies[b][:42]:44}{m.vol_annual[b]:>9.3f}{cma_s:>9}{m.return_annual[b]:>9.3f}"
+        )
     print("\nCorrelation (empirical):")
     print(m.corr.round(3).to_string())
 

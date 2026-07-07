@@ -99,7 +99,11 @@ def compute_monte_carlo(
 
     # Aggregate metrics
     all_coverages = np.concatenate(
-        [path.coverage_months_by_quarter.values for path in paths if not path.coverage_months_by_quarter.empty]
+        [
+            path.coverage_months_by_quarter.values
+            for path in paths
+            if not path.coverage_months_by_quarter.empty
+        ]
     )
 
     all_final_navs = np.array([path.final_nav_usd for path in paths])
@@ -125,9 +129,7 @@ def compute_monte_carlo(
 
     # Required reserves: empirical quantile of each path's closed-form
     # minimum initial liquid NAV, one per confidence level.
-    req_nav_80, req_nav_90, req_nav_95 = _aggregate_required_reserves(
-        paths, confidence_levels
-    )
+    req_nav_80, req_nav_90, req_nav_95 = _aggregate_required_reserves(paths, confidence_levels)
 
     # Final NAV percentiles
     median_final_nav = float(np.median(all_final_navs))
@@ -266,9 +268,13 @@ def _generate_single_path(
         path_id=path_id,
         seed=seed if seed is not None else 0,
         nav_by_quarter=pd.Series(nav_by_quarter, index=quarter_index, name="nav"),
-        liquid_nav_by_quarter=pd.Series(liquid_nav_by_quarter, index=quarter_index, name="liquid_nav"),
+        liquid_nav_by_quarter=pd.Series(
+            liquid_nav_by_quarter, index=quarter_index, name="liquid_nav"
+        ),
         spending_by_quarter=pd.Series(spending_by_quarter, index=quarter_index, name="spending"),
-        coverage_months_by_quarter=pd.Series(coverage_by_quarter, index=quarter_index, name="coverage_months"),
+        coverage_months_by_quarter=pd.Series(
+            coverage_by_quarter, index=quarter_index, name="coverage_months"
+        ),
         breached_quarters=breached_quarters,
         earliest_breach_quarter=earliest_breach,
         final_nav_usd=final_nav,
@@ -293,7 +299,7 @@ def _compute_max_drawdown(nav_series: np.ndarray) -> tuple[float, int]:
         return 0.0, 0
 
     trough_idx = np.argmin(drawdown)
-    peak_idx = np.argmax(cummax[:trough_idx + 1])
+    peak_idx = np.argmax(cummax[: trough_idx + 1])
     duration = trough_idx - peak_idx
 
     return float(max_dd), int(duration)
@@ -333,9 +339,7 @@ def _required_initial_liquid_nav(
     for q in range(horizon):
         gross_factor *= 1.0 + returns[q]
         outflow_compounded = (
-            outflow_compounded * (1.0 + returns[q])
-            + spending_by_quarter[q]
-            + calls_by_quarter[q]
+            outflow_compounded * (1.0 + returns[q]) + spending_by_quarter[q] + calls_by_quarter[q]
         )
         spend = spending_by_quarter[q]
         if spend <= 0.0:
@@ -409,6 +413,8 @@ def _build_fixture_summary(config: MonteCarloConfig) -> str:
 
     lines.append(f"Call scenarios: {len(config.call_scenarios)}")
     for key, s in config.call_scenarios.items():
-        lines.append(f"  {key}: median {s.hazard_rate_median_years:.1f}y, early_call_prob={s.early_call_probability:.1%}")
+        lines.append(
+            f"  {key}: median {s.hazard_rate_median_years:.1f}y, early_call_prob={s.early_call_probability:.1%}"
+        )
 
     return "\n".join(lines)

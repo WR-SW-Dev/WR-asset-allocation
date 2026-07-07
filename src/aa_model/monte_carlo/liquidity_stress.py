@@ -154,8 +154,12 @@ def _compute_stress_for_single_path(
     horizon = len(path.nav_by_quarter)
 
     for q in range(horizon):
-        quarter_liquid_nav = path.liquid_nav_by_quarter.iloc[q] if q < len(path.liquid_nav_by_quarter) else 0.0
-        quarter_spending = path.spending_by_quarter.iloc[q] if q < len(path.spending_by_quarter) else 0.0
+        quarter_liquid_nav = (
+            path.liquid_nav_by_quarter.iloc[q] if q < len(path.liquid_nav_by_quarter) else 0.0
+        )
+        quarter_spending = (
+            path.spending_by_quarter.iloc[q] if q < len(path.spending_by_quarter) else 0.0
+        )
 
         liquid_nav_by_quarter[q] = quarter_liquid_nav
 
@@ -187,7 +191,9 @@ def _compute_stress_for_single_path(
         )
 
         # Record coverage months
-        coverage = result.liquid_to_annual_spend if result.liquid_to_annual_spend is not None else 0.0
+        coverage = (
+            result.liquid_to_annual_spend if result.liquid_to_annual_spend is not None else 0.0
+        )
         coverage_months_by_quarter[q] = coverage
 
         # Record breach

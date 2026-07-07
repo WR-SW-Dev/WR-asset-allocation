@@ -4,5 +4,9 @@ pydantic==2.7.1
 pyyaml==6.0.1
 pyarrow>=17,<24
 jinja2==3.1.4
+# Excel engine for pandas.read_excel — workbook / position ingestion
+# (Phase 14/15) reads .xlsx through it; also imported directly by the
+# row-scope tests. Previously undeclared, so CI lacked it.
+openpyxl==3.1.5
 # Lint pinned alongside runtime deps so CI / local environments cannot drift.
 ruff==0.4.4

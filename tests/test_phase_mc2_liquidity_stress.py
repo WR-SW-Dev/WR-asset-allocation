@@ -149,7 +149,9 @@ def test_monte_carlo_stress_opt_in(
         assert stress.path_id == path_id
         assert len(stress.liquid_nav_by_quarter) == 8  # 8 quarters
         assert len(stress.coverage_months_by_quarter) == 8
-        assert stress.earliest_breach_quarter is None or isinstance(stress.earliest_breach_quarter, int)
+        assert stress.earliest_breach_quarter is None or isinstance(
+            stress.earliest_breach_quarter, int
+        )
         assert 0.0 <= stress.probability_of_breach_this_path <= 1.0
 
 
@@ -199,7 +201,9 @@ def test_zero_vol_monte_carlo_matches_deterministic(
     )
 
     # All paths should have the same coverage (deterministic)
-    coverages = [stress.coverage_months_by_quarter.get(0, 0.0) for stress in stress_by_path.values()]
+    coverages = [
+        stress.coverage_months_by_quarter.get(0, 0.0) for stress in stress_by_path.values()
+    ]
     assert len(set(coverages)) == 1, "Zero-vol paths should all have same Q0 coverage"
 
     # Coverage should match deterministic (approximately, within 10%)
