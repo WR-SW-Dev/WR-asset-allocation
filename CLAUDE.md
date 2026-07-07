@@ -75,6 +75,28 @@ example.
 Note: `cvxportfolio` and `riskfolio` are optional extras; both are pulled in by
 `requirements-dev.txt`. Without them, gated tests skip / `ModuleNotFoundError` at collection.
 
+## Code intelligence (codegraph)
+
+This repo is indexed by codegraph — a SQLite knowledge graph of every symbol,
+edge, and file (~127 files / 1700+ nodes). The DB lives at
+`.codegraph/codegraph.db` and is **local, gitignored, per-machine** (never
+committed). Consult it BEFORE writing or editing model code — it is the
+pre-built search index, so a couple of codegraph calls beat a grep/read sweep.
+
+- Query via the codegraph MCP tools. If the MCP's default project is another
+  repo (e.g. biotech-screener), pass
+  `projectPath="/mnt/c/Projects/asset allocation/asset-allocation"`.
+- Typical use on this codebase:
+  - `codegraph_context` — orient on a schema / phase / adapter area first.
+  - `codegraph_trace` — follow a flow end-to-end (e.g. workbook line → ledger
+    quarter → coverage report), including dynamic-dispatch hops grep can't.
+  - `codegraph_impact` / `codegraph_callers` — before changing a schema or an
+    adapter contract (§9 of SPEC), check what a change would break.
+- The index is a point-in-time snapshot and **drifts as code changes**. There
+  is **no auto-reindex watcher** (org policy: auto-reload off) — re-index
+  manually when the graph is stale (e.g. after a phase lands). Treat a stale
+  result as a hint, then confirm the specific detail with Read.
+
 ## What NOT to do
 - Don't hard-code 60/40 anywhere. Stub allocator reads `configs/public_allocation.yaml::stub_weights`.
 - Don't introduce a base class for a single subclass beyond what §9 of SPEC mandates.
