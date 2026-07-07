@@ -153,9 +153,11 @@ class PECommitmentExposureRecord(BaseModel):
     """Per-fund PE / alternatives commitment exposure at `as_of_date`.
 
     Aligned subset of the Phase 23 commitment book: identity + the four
-    lifecycle amounts. `unfunded_usd`, when supplied, must equal
-    `commitment_usd - called_to_date_usd`; it is never synthesized when the
-    inputs are missing.
+    lifecycle amounts. Cumulative `called_to_date_usd` may exceed
+    `commitment_usd` (recallable capital re-called). `unfunded_usd` is a
+    floor-0 quantity: when supplied it must equal
+    `max(0, commitment_usd - called_to_date_usd)`; it is never synthesized
+    when the inputs are missing.
     """
 
     model_config = _STRICT
@@ -196,19 +198,17 @@ class PECommitmentExposureRecord(BaseModel):
 
     @model_validator(mode="after")
     def _lifecycle_consistency(self) -> PECommitmentExposureRecord:
-        if self.called_to_date_usd is not None and self.called_to_date_usd > self.commitment_usd:
-            raise ValueError(
-                f"fund_key={self.fund_key!r}: called_to_date_usd "
-                f"({self.called_to_date_usd}) exceeds commitment_usd "
-                f"({self.commitment_usd})"
-            )
-        # unfunded, when both it and called are present, must reconcile exactly.
+        # Cumulative called (paid-in) MAY exceed commitment when distributions
+        # are recallable and subsequently re-called — a real PE condition
+        # (surfaced by the J&D oracle). So there is no `called <= commitment`
+        # rule. Unfunded commitment is a floor-0 quantity, so when both it and
+        # called are present it reconciles to max(0, commitment - called).
         if self.unfunded_usd is not None and self.called_to_date_usd is not None:
-            implied = self.commitment_usd - self.called_to_date_usd
+            implied = max(Decimal("0"), self.commitment_usd - self.called_to_date_usd)
             if abs(self.unfunded_usd - implied) > _RECON_TOLERANCE:
                 raise ValueError(
                     f"fund_key={self.fund_key!r}: unfunded_usd "
-                    f"({self.unfunded_usd}) != commitment - called ({implied})"
+                    f"({self.unfunded_usd}) != max(0, commitment - called) ({implied})"
                 )
         return self
 

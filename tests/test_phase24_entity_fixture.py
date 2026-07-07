@@ -201,7 +201,9 @@ def test_pe_unfunded_inconsistency_raises() -> None:
         EntityFixture.model_validate(payload)
 
 
-def test_pe_called_exceeds_commitment_raises() -> None:
+def test_pe_over_called_allowed_unfunded_floors_to_zero() -> None:
+    # Cumulative called may exceed commitment (recallable capital re-called);
+    # unfunded then reconciles to 0, not a negative number.
     payload = _base_payload()
     payload["pe_exposure"] = [
         {
@@ -210,9 +212,26 @@ def test_pe_called_exceeds_commitment_raises() -> None:
             "policy_class": "private_equity",
             "commitment_usd": "1000000",
             "called_to_date_usd": "1200000",
+            "unfunded_usd": "0",
         },
     ]
-    with pytest.raises(ValidationError, match="exceeds commitment"):
+    fx = EntityFixture.model_validate(payload)
+    assert fx.pe_exposure[0].called_to_date_usd == Decimal("1200000")
+
+
+def test_pe_negative_unfunded_still_rejected() -> None:
+    payload = _base_payload()
+    payload["pe_exposure"] = [
+        {
+            "fund_key": "f1",
+            "entity_id": "e1",
+            "policy_class": "private_equity",
+            "commitment_usd": "1000000",
+            "called_to_date_usd": "1200000",
+            "unfunded_usd": "-200000",
+        },
+    ]
+    with pytest.raises(ValidationError, match="must be >= 0"):
         EntityFixture.model_validate(payload)
 
 
