@@ -1,0 +1,222 @@
+# Asset-class -> index bridge for the Asset Allocation Study Model.
+#
+# Maps each model asset class / sub-asset-class to one or more index_keys defined
+# in configs/morningstar_index_universe.yaml. Consumed (optionally) by CMA
+# calibration, Monte Carlo assumption sourcing, and study exhibits to select which
+# normalized return series represents an asset class.
+#
+# CONTRACT
+#   * `primary_index_key`    the default series for the asset class. Must be a broad
+#                            market index, NOT a sector proxy or ETF, unless the row
+#                            is itself a proxy/custom role.
+#   * `secondary_index_keys` alternates for cross-checking / robustness.
+#   * `fallback_index_key`   used when the primary lacks `min_history_months` of data.
+#   * `model_usage`          benchmark | capital_market_assumption | stress_proxy |
+#                            reporting_only.
+#   * `min_history_months`   minimum monthly observations required before the series
+#                            may drive CMA calibration (advisory; enforced by callers).
+#
+# All index_keys MUST exist in morningstar_index_universe.yaml (validated at load).
+# Sector proxies (biotech, banks, Mag7) and custom proxies (Galene) are intentionally
+# NOT primary benchmarks; they appear only as reporting_only / stress rows or require
+# explicit approval (see `requires_approval`).
+
+asset_classes:
+  - asset_class: "US Equity - Total Market"
+    sub_asset_class: "US Total Market"
+    primary_index_key: russell_3000_tr_usd
+    secondary_index_keys: [sp_500_tr_usd, russell_1000_tr_usd]
+    fallback_index_key: sp_500_tr_usd
+    model_usage: "capital_market_assumption"
+    min_history_months: 120
+    notes: "Broad US equity. S&P 500 is the large-cap fallback."
+
+  - asset_class: "US Equity - Large Cap"
+    sub_asset_class: "US Large Cap"
+    primary_index_key: russell_1000_tr_usd
+    secondary_index_keys: [sp_500_tr_usd]
+    fallback_index_key: sp_500_tr_usd
+    model_usage: "benchmark"
+    min_history_months: 120
+    notes: ""
+
+  - asset_class: "US Equity - Large Growth"
+    sub_asset_class: "US Large Growth"
+    primary_index_key: russell_1000_growth_tr_usd
+    secondary_index_keys: [russell_3000_growth_tr_usd]
+    fallback_index_key: russell_1000_tr_usd
+    model_usage: "benchmark"
+    min_history_months: 120
+    notes: ""
+
+  - asset_class: "US Equity - Large Value"
+    sub_asset_class: "US Large Value"
+    primary_index_key: russell_1000_value_tr_usd
+    secondary_index_keys: [russell_3000_value_tr_usd]
+    fallback_index_key: russell_1000_tr_usd
+    model_usage: "benchmark"
+    min_history_months: 120
+    notes: ""
+
+  - asset_class: "US Equity - Small Cap"
+    sub_asset_class: "US Small Cap"
+    primary_index_key: russell_2000_tr_usd
+    secondary_index_keys: [russell_2500_tr_usd]
+    fallback_index_key: russell_2500_tr_usd
+    model_usage: "benchmark"
+    min_history_months: 120
+    notes: ""
+
+  - asset_class: "US Equity - Small Value"
+    sub_asset_class: "US Small Value"
+    primary_index_key: russell_2000_value_tr_usd
+    secondary_index_keys: [russell_2500_value_tr_usd]
+    fallback_index_key: russell_2000_tr_usd
+    model_usage: "benchmark"
+    min_history_months: 120
+    notes: ""
+
+  - asset_class: "International Equity - Global"
+    sub_asset_class: "Global Equity"
+    primary_index_key: msci_acwi_nr_usd
+    secondary_index_keys: [russell_3000_tr_usd]
+    fallback_index_key: msci_acwi_ex_usa_nr_usd
+    model_usage: "capital_market_assumption"
+    min_history_months: 120
+    notes: ""
+
+  - asset_class: "International Equity - Developed ex-US"
+    sub_asset_class: "Developed ex-US Equity"
+    primary_index_key: msci_acwi_ex_usa_nr_usd
+    secondary_index_keys: [msci_eafe_nr_usd]
+    fallback_index_key: msci_eafe_nr_usd
+    model_usage: "capital_market_assumption"
+    min_history_months: 120
+    notes: "MSCI ACWI ex USA preferred; EAFE is the developed-markets fallback."
+
+  - asset_class: "International Equity - Emerging Markets"
+    sub_asset_class: "Emerging Markets Equity"
+    primary_index_key: msci_em_nr_usd
+    secondary_index_keys: []
+    fallback_index_key: msci_acwi_ex_usa_nr_usd
+    model_usage: "capital_market_assumption"
+    min_history_months: 120
+    notes: ""
+
+  - asset_class: "Fixed Income - US Core"
+    sub_asset_class: "US Core Bonds"
+    primary_index_key: bloomberg_us_agg_bond_tr_usd
+    secondary_index_keys: [bloomberg_us_govt_credit_1_5_yr_tr_usd]
+    fallback_index_key: bloomberg_us_govt_credit_1_5_yr_tr_usd
+    model_usage: "capital_market_assumption"
+    min_history_months: 120
+    notes: ""
+
+  - asset_class: "Fixed Income - Short/Intermediate"
+    sub_asset_class: "Short-Intermediate Government/Credit"
+    primary_index_key: bloomberg_us_govt_credit_1_5_yr_tr_usd
+    secondary_index_keys: [bloomberg_us_agg_bond_tr_usd]
+    fallback_index_key: bloomberg_us_agg_bond_tr_usd
+    model_usage: "benchmark"
+    min_history_months: 120
+    notes: ""
+
+  - asset_class: "Fixed Income - High Yield"
+    sub_asset_class: "US High Yield"
+    primary_index_key: bloomberg_us_corporate_high_yield_tr_usd
+    secondary_index_keys: []
+    fallback_index_key: bloomberg_us_agg_bond_tr_usd
+    model_usage: "benchmark"
+    min_history_months: 120
+    notes: ""
+
+  - asset_class: "Fixed Income - Leveraged Loans"
+    sub_asset_class: "Leveraged Loans"
+    primary_index_key: bloomberg_us_leveraged_loan_insur_tr_usd
+    secondary_index_keys: [sp_ubs_leveraged_loan_usd]
+    fallback_index_key: sp_ubs_leveraged_loan_usd
+    model_usage: "benchmark"
+    min_history_months: 60
+    notes: "Prefer Bloomberg US Leveraged Loan if history is cleaner; else compare vs S&P UBS Leveraged Loan."
+
+  - asset_class: "Fixed Income - Global Aggregate"
+    sub_asset_class: "Global Aggregate Bonds Hedged"
+    primary_index_key: bloomberg_global_aggregate_tr_hdg_usd
+    secondary_index_keys: [bloomberg_global_aggregate_tr_usd]
+    fallback_index_key: bloomberg_us_agg_bond_tr_usd
+    model_usage: "benchmark"
+    min_history_months: 120
+    notes: ""
+
+  - asset_class: "Fixed Income - Municipal High Yield"
+    sub_asset_class: "High Yield Municipal Bonds"
+    primary_index_key: bloomberg_hy_muni_tr_usd
+    secondary_index_keys: []
+    fallback_index_key: bloomberg_us_corporate_high_yield_tr_usd
+    model_usage: "reporting_only"
+    min_history_months: 120
+    notes: ""
+
+  - asset_class: "Cash"
+    sub_asset_class: "Treasury Bills"
+    primary_index_key: state_street_spdr_blmbg_1_3mth_t_bill_etf
+    secondary_index_keys: []
+    fallback_index_key: state_street_spdr_blmbg_1_3mth_t_bill_etf
+    model_usage: "capital_market_assumption"
+    min_history_months: 36
+    notes: "ETF used as cash proxy (intentional mapping)."
+
+  - asset_class: "Real Assets - Public REITs"
+    sub_asset_class: "US REITs"
+    primary_index_key: ftse_nareit_composite_tr
+    secondary_index_keys: [ftse_nareit_eqty_apartments_tr]
+    fallback_index_key: ftse_nareit_composite_tr
+    model_usage: "capital_market_assumption"
+    min_history_months: 120
+    notes: ""
+
+  - asset_class: "Real Estate - Private Core"
+    sub_asset_class: "Private Core Real Estate"
+    primary_index_key: ncreif_property
+    secondary_index_keys: [ncreif_apartment]
+    fallback_index_key: ftse_nareit_composite_tr
+    model_usage: "stress_proxy"
+    min_history_months: 40
+    notes: "Quarterly appraisal-based series; smoothed. Use as a private-RE proxy, not a tradable benchmark."
+
+  - asset_class: "Real Estate - Private Apartment"
+    sub_asset_class: "Private Apartment Real Estate"
+    primary_index_key: ncreif_apartment
+    secondary_index_keys: [ncreif_property]
+    fallback_index_key: ftse_nareit_eqty_apartments_tr
+    model_usage: "stress_proxy"
+    min_history_months: 40
+    notes: "Quarterly appraisal-based series; smoothed."
+
+  - asset_class: "Real Assets - Commodities"
+    sub_asset_class: "Commodities"
+    primary_index_key: bloomberg_commodity_tr_usd
+    secondary_index_keys: []
+    fallback_index_key: bloomberg_commodity_tr_usd
+    model_usage: "capital_market_assumption"
+    min_history_months: 120
+    notes: ""
+
+  - asset_class: "Alternatives - Hedge Funds"
+    sub_asset_class: "Hedge Funds Broad"
+    primary_index_key: credit_suisse_hedge_fund_usd
+    secondary_index_keys: []
+    fallback_index_key: credit_suisse_hedge_fund_usd
+    model_usage: "stress_proxy"
+    min_history_months: 120
+    notes: "Reports on a lag; expect stale Return Date."
+
+  - asset_class: "Alternatives - Private Credit"
+    sub_asset_class: "Private Credit Proxy"
+    primary_index_key: galene_credit_fund_proxy_returns
+    secondary_index_keys: [bloomberg_us_corporate_high_yield_tr_usd, bloomberg_us_leveraged_loan_insur_tr_usd]
+    fallback_index_key: bloomberg_us_corporate_high_yield_tr_usd
+    model_usage: "reporting_only"
+    min_history_months: 24
+    requires_approval: true
+    notes: "CUSTOM PROXY. requires_approval=true: must be explicitly approved before it can drive CMA calibration."

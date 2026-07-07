@@ -30,6 +30,18 @@ data/processed/*
 data/external/*
 !data/external/.gitkeep
 
+# Morningstar Direct — LICENSED vendor data. Never commit raw exports or any
+# series/reports derived from them. Only code, schemas, configs, docs, tiny
+# synthetic fixtures, and tests are committed (see docs/morningstar_index_returns_spec.md).
+data/vendor/
+!data/vendor/morningstar/raw/.gitkeep
+data/normalized/*
+!data/normalized/.gitkeep
+reports/morningstar_*
+# Morningstar credentials / local overrides (if a live path is ever added).
+configs/morningstar_credentials_local.yaml
+.env.morningstar
+
 # IDE
 .vscode/
 .idea/
