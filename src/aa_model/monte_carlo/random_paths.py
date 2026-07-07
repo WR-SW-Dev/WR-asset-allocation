@@ -64,7 +64,9 @@ class RandomPathGenerator:
         returns = rng.normal(quarterly_mean, quarterly_vol, self.config.horizon_quarters)
         return returns
 
-    def generate_spending_path(self, driver: str, base_annual_spend: float, path_id: int) -> np.ndarray:
+    def generate_spending_path(
+        self, driver: str, base_annual_spend: float, path_id: int
+    ) -> np.ndarray:
         """Generate quarterly spending amounts, one path.
 
         Parameters
@@ -91,18 +93,22 @@ class RandomPathGenerator:
         quarterly_growth_mean = scenario.mean_annual_growth / 4.0
         quarterly_growth_vol = scenario.annual_vol / 2.0
 
-        growth_rates = rng.normal(quarterly_growth_mean, quarterly_growth_vol, self.config.horizon_quarters)
+        growth_rates = rng.normal(
+            quarterly_growth_mean, quarterly_growth_vol, self.config.horizon_quarters
+        )
 
         # Cumulative inflation/growth on base spend
         spending = np.empty(self.config.horizon_quarters, dtype=float)
         current_spend = base_annual_spend / 4.0  # quarterly starting point
         for q in range(self.config.horizon_quarters):
             spending[q] = current_spend
-            current_spend *= (1.0 + growth_rates[q])
+            current_spend *= 1.0 + growth_rates[q]
 
         return spending
 
-    def generate_call_path(self, pe_sleeve: str, base_commitment: float, path_id: int) -> np.ndarray:
+    def generate_call_path(
+        self, pe_sleeve: str, base_commitment: float, path_id: int
+    ) -> np.ndarray:
         """Generate quarterly PE capital-call amounts, one path.
 
         Parameters
@@ -126,7 +132,7 @@ class RandomPathGenerator:
         rng = np.random.default_rng(self._seed_for_path(path_id, pe_sleeve))
 
         # Baseline cumulative call % by quarter (from config)
-        baseline = np.array(scenario.base_called_pct_by_quarter[:self.config.horizon_quarters])
+        baseline = np.array(scenario.base_called_pct_by_quarter[: self.config.horizon_quarters])
 
         # Apply early-call hazard: shift baseline forward with probability
         if scenario.early_call_probability > 0:
@@ -169,6 +175,7 @@ class RandomPathGenerator:
         if self.config.random_seed is None:
             # No replay: use hash of (path_id, scenario) → non-deterministic
             import random
+
             return random.randint(0, 2**31 - 1)
 
         # Deterministic and cross-process stable: SHA256 of the combined key.
@@ -177,7 +184,9 @@ class RandomPathGenerator:
         return int.from_bytes(digest[:4], "big")  # 32-bit seed in [0, 2^32)
 
 
-def zero_volatility_path(annual_return: float, annual_spend: float, horizon_quarters: int) -> dict[str, np.ndarray]:
+def zero_volatility_path(
+    annual_return: float, annual_spend: float, horizon_quarters: int
+) -> dict[str, np.ndarray]:
     """Generate deterministic baseline path (zero volatility).
 
     Used to verify that Monte Carlo with vol=0 collapses to deterministic.

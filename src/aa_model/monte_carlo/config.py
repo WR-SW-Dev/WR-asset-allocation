@@ -105,13 +105,18 @@ class CallTimingScenario:
     def __post_init__(self) -> None:
         if not isinstance(self.pe_sleeve, str) or not self.pe_sleeve.strip():
             raise ValueError("pe_sleeve must be non-empty string")
-        if not isinstance(self.base_called_pct_by_quarter, list) or not self.base_called_pct_by_quarter:
+        if (
+            not isinstance(self.base_called_pct_by_quarter, list)
+            or not self.base_called_pct_by_quarter
+        ):
             raise ValueError("base_called_pct_by_quarter must be non-empty list")
         for pct in self.base_called_pct_by_quarter:
             if not (0.0 <= pct <= 1.0):
                 raise ValueError("all percentages must be in [0, 1]")
-        if not all(self.base_called_pct_by_quarter[i] <= self.base_called_pct_by_quarter[i + 1]
-                   for i in range(len(self.base_called_pct_by_quarter) - 1)):
+        if not all(
+            self.base_called_pct_by_quarter[i] <= self.base_called_pct_by_quarter[i + 1]
+            for i in range(len(self.base_called_pct_by_quarter) - 1)
+        ):
             raise ValueError("base_called_pct_by_quarter must be monotonically non-decreasing")
         if self.hazard_rate_median_years <= 0.0:
             raise ValueError("hazard_rate_median_years must be > 0")

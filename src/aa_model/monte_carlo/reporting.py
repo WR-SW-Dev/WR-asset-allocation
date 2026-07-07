@@ -126,7 +126,11 @@ def _write_paths_parquet(result: MonteCarloResult, path: Path) -> None:
 
     for path_result in result.paths:
         for quarter in range(len(path_result.nav_by_quarter)):
-            nav = path_result.nav_by_quarter.iloc[quarter] if quarter < len(path_result.nav_by_quarter) else 0.0
+            nav = (
+                path_result.nav_by_quarter.iloc[quarter]
+                if quarter < len(path_result.nav_by_quarter)
+                else 0.0
+            )
             liquid_nav = (
                 path_result.liquid_nav_by_quarter.iloc[quarter]
                 if quarter < len(path_result.liquid_nav_by_quarter)
@@ -172,7 +176,9 @@ def _write_report_markdown(result: MonteCarloResult, path: Path) -> None:
     lines.append(f"**Generated:** {datetime.now(UTC).isoformat()}\n")
     lines.append(f"**Config Hash:** `{result.config_hash}`\n")
     lines.append(f"**Fixture Hash:** `{result.fixture_hash}`\n")
-    lines.append(f"**Seed:** {result.seed if result.seed is not None else 'None (non-deterministic)'}\n")
+    lines.append(
+        f"**Seed:** {result.seed if result.seed is not None else 'None (non-deterministic)'}\n"
+    )
 
     lines.append("\n## Standing Advisory\n")
     lines.append(result.manifest.advisory_caveat)
@@ -269,11 +275,15 @@ def _write_report_markdown(result: MonteCarloResult, path: Path) -> None:
     )
 
     lines.append("\n## Caveats\n")
-    lines.append("1. **Synthetic Assumptions:** Return volatility, spending shocks, and call timing")
+    lines.append(
+        "1. **Synthetic Assumptions:** Return volatility, spending shocks, and call timing"
+    )
     lines.append("   are from CMA long-term expectations and generic PE hazard rates.")
     lines.append("2. **Not Forecasts:** These are stress-test scenarios, not predictions.")
     lines.append("3. **Advisory Only:** Outputs are not decision-grade until deterministic spine")
-    lines.append("   (L19 row classification, L20 workbook validation, Phase 23 PE data) is validated.")
+    lines.append(
+        "   (L19 row classification, L20 workbook validation, Phase 23 PE data) is validated."
+    )
     lines.append("4. **No Real Data:** Entity cash flows, manager terms, and PE actuals are not")
     lines.append("   yet integrated from live client sources.")
     lines.append("5. **Deterministic Path:** Run with seed=None for non-reproducible results;")
@@ -367,7 +377,11 @@ def monte_carlo_paths_dataframe(result: MonteCarloResult) -> pd.DataFrame:
 
     for path_result in result.paths:
         for quarter in range(len(path_result.nav_by_quarter)):
-            nav = path_result.nav_by_quarter.iloc[quarter] if quarter < len(path_result.nav_by_quarter) else 0.0
+            nav = (
+                path_result.nav_by_quarter.iloc[quarter]
+                if quarter < len(path_result.nav_by_quarter)
+                else 0.0
+            )
             liquid_nav = (
                 path_result.liquid_nav_by_quarter.iloc[quarter]
                 if quarter < len(path_result.liquid_nav_by_quarter)

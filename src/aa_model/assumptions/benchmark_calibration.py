@@ -111,7 +111,9 @@ def empirical_moments(
     lookback_years = lookback_years or 5
     ann = annualization_factor or _TRADING_DAYS
     if not proxies:
-        raise ValueError("No bucket->benchmark proxies configured (see configs/benchmark_proxies.yaml).")
+        raise ValueError(
+            "No bucket->benchmark proxies configured (see configs/benchmark_proxies.yaml)."
+        )
 
     mf = _import_feed()
     end = pd.Timestamp(as_of) if as_of is not None else pd.Timestamp(mf.latest_date())
@@ -128,7 +130,10 @@ def empirical_moments(
     vol_annual.name = None
     corr = frac.corr()
     return_annual = pd.Series(
-        {b: mf.trailing_return(proxies[b], f"{lookback_years}Y", as_of=end) / 100.0 for b in proxies},
+        {
+            b: mf.trailing_return(proxies[b], f"{lookback_years}Y", as_of=end) / 100.0
+            for b in proxies
+        },
         dtype=float,
     )
 

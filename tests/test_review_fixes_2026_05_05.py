@@ -109,8 +109,9 @@ def test_local_overlay_resolves_workbook_paths(repo_root, tmp_path):
 
     assert cfg.workbook_ingestion is not None
     assert Path(cfg.workbook_ingestion.workbook_path).is_absolute()
-    assert cfg.workbook_ingestion.workbook_path.endswith("data/fake_workbook.xlsx") or \
-        cfg.workbook_ingestion.workbook_path.endswith("data\\fake_workbook.xlsx")
+    assert cfg.workbook_ingestion.workbook_path.endswith(
+        "data/fake_workbook.xlsx"
+    ) or cfg.workbook_ingestion.workbook_path.endswith("data\\fake_workbook.xlsx")
 
     assert cfg.position_ingestion is not None
     assert Path(cfg.position_ingestion.workbook_path).is_absolute()
