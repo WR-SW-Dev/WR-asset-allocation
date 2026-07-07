@@ -21,14 +21,14 @@ accounts:
     valuation_date: 2026-04-30
 
 segments:
-  # --- investable financial assets (carry a policy_class) ---
-  - {segment_key: inv_re_opco, segment: investable, policy_class: re_opco_stabilized, amount_usd: "2000000.00"}
-  - {segment_key: inv_real_estate, segment: investable, policy_class: real_estate, amount_usd: "4000000.00"}
-  - {segment_key: inv_equity, segment: investable, policy_class: equity, amount_usd: "4000000.00"}
-  - {segment_key: inv_pe, segment: investable, policy_class: private_equity, amount_usd: "3000000.00"}
-  - {segment_key: inv_abs_return, segment: investable, policy_class: absolute_return, amount_usd: "2000000.00"}
-  - {segment_key: inv_fixed_income, segment: investable, policy_class: fixed_income, amount_usd: "14000000.00"}
-  - {segment_key: inv_cash, segment: investable, policy_class: cash_and_cash_alts, amount_usd: "11000000.00"}
+  # --- investable financial assets (carry a policy_class + redemption tier) ---
+  - {segment_key: inv_re_opco, segment: investable, policy_class: re_opco_stabilized, amount_usd: "2000000.00", liquidity_tier: at_maturity}
+  - {segment_key: inv_real_estate, segment: investable, policy_class: real_estate, amount_usd: "4000000.00", liquidity_tier: at_maturity}
+  - {segment_key: inv_equity, segment: investable, policy_class: equity, amount_usd: "4000000.00", liquidity_tier: daily}
+  - {segment_key: inv_pe, segment: investable, policy_class: private_equity, amount_usd: "3000000.00", liquidity_tier: at_maturity}
+  - {segment_key: inv_abs_return, segment: investable, policy_class: absolute_return, amount_usd: "2000000.00", liquidity_tier: quarterly}
+  - {segment_key: inv_fixed_income, segment: investable, policy_class: fixed_income, amount_usd: "14000000.00", liquidity_tier: monthly}
+  - {segment_key: inv_cash, segment: investable, policy_class: cash_and_cash_alts, amount_usd: "11000000.00", liquidity_tier: daily}
   # --- personal-use & structural (NO policy_class; never investable) ---
   - {segment_key: str_personal_use, segment: personal_use, amount_usd: "50000000.00"}
   - {segment_key: str_note_recv, segment: note_receivable, amount_usd: "5000000.00"}

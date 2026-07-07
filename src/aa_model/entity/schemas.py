@@ -70,6 +70,23 @@ _SEGMENT_LITERAL = Literal[
 
 _INVESTABLE_SEGMENT = "investable"
 
+# Canonical display/iteration order of the seven policy classes. Used by the
+# allocation-vs-target lens so class ordering is deterministic.
+_POLICY_CLASS_ORDER: tuple[str, ...] = (
+    "re_opco_stabilized",
+    "real_estate",
+    "equity",
+    "private_equity",
+    "absolute_return",
+    "fixed_income",
+    "cash_and_cash_alts",
+)
+
+# Redemption-tier presentation axis for the liquidity lens. Distinct from the
+# Phase-12 liquid/semi_liquid/illiquid tiers and the Phase-15 buckets; this is
+# the study's client-facing tier vocabulary. Only investable segments carry it.
+_LIQUIDITY_TIER_LITERAL = Literal["daily", "monthly", "quarterly", "at_maturity"]
+
 
 class BalanceSheetSegmentRecord(BaseModel):
     """One balance-sheet segment amount.
@@ -86,6 +103,9 @@ class BalanceSheetSegmentRecord(BaseModel):
     segment: _SEGMENT_LITERAL
     policy_class: _POLICY_CLASS_LITERAL | None = None
     amount_usd: Decimal
+    # Optional redemption tier for the liquidity lens. Only meaningful for
+    # investable segments; structural NAV must leave it None.
+    liquidity_tier: _LIQUIDITY_TIER_LITERAL | None = None
 
     @field_validator("segment_key")
     @classmethod
@@ -119,6 +139,12 @@ class BalanceSheetSegmentRecord(BaseModel):
                 f"segment_key={self.segment_key!r}: non-investable segment "
                 f"{self.segment!r} must NOT carry a policy_class "
                 f"(structural NAV is never in the investable base)"
+            )
+        if not is_investable and self.liquidity_tier is not None:
+            raise ValueError(
+                f"segment_key={self.segment_key!r}: non-investable segment "
+                f"{self.segment!r} must NOT carry a liquidity_tier "
+                f"(the liquidity lens covers the investable portfolio only)"
             )
         return self
 
@@ -263,4 +289,53 @@ class EntityFixture(BaseModel):
                     f"expected_total_nav_usd ({self.expected_total_nav_usd}) "
                     f"within {_RECON_TOLERANCE}"
                 )
+        return self
+
+
+# Strategic-target sums are authored as percentages; allow a small rounding
+# tolerance around 1.0 (e.g. targets stated to whole percent).
+_TARGET_SUM_TOLERANCE = Decimal("0.005")
+
+
+class EntityPolicyConfig(BaseModel):
+    """An entity's Wake Robin strategic policy targets.
+
+    One target weight per policy class it holds a policy for; weights are
+    fractions of the investable base and sum to 1.0 within tolerance. Classes
+    omitted here have an implied 0% target (still reported by the
+    allocation-vs-target lens if the entity holds them — an over-target hold).
+    """
+
+    model_config = _STRICT
+
+    policy_version: str
+    entity_id: str
+    targets: dict[_POLICY_CLASS_LITERAL, Decimal]
+
+    @field_validator("policy_version")
+    @classmethod
+    def _version_url_safe(cls, v: str) -> str:
+        if not _URL_SAFE_RE.match(v):
+            raise ValueError(f"policy_version must be URL-safe; got {v!r}")
+        return v
+
+    @field_validator("entity_id")
+    @classmethod
+    def _entity_id_no_colons(cls, v: str) -> str:
+        if ":" in v:
+            raise ValueError(f"entity_id must not contain colons; got {v!r}")
+        return v
+
+    @model_validator(mode="after")
+    def _targets_well_formed(self) -> EntityPolicyConfig:
+        if not self.targets:
+            raise ValueError("targets must be non-empty")
+        for cls_name, w in self.targets.items():
+            if not w.is_finite() or w < 0:
+                raise ValueError(f"target[{cls_name}] must be finite and >= 0; got {w}")
+        total = sum(self.targets.values(), Decimal("0"))
+        if abs(total - Decimal("1")) > _TARGET_SUM_TOLERANCE:
+            raise ValueError(
+                f"policy targets must sum to 1.0 within {_TARGET_SUM_TOLERANCE}; got {total}"
+            )
         return self

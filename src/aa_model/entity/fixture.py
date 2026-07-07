@@ -22,7 +22,7 @@ from typing import Any
 
 import yaml
 
-from aa_model.entity.schemas import EntityFixture
+from aa_model.entity.schemas import EntityFixture, EntityPolicyConfig
 
 _ZERO = Decimal("0")
 
@@ -101,6 +101,22 @@ def load_entity_fixture(path: str | Path) -> EntityFixture:
     if not isinstance(data, dict):
         raise ValueError(f"fixture root must be a mapping; got {type(data)!r}")
     return EntityFixture.model_validate(data)
+
+
+def load_entity_policy(path: str | Path) -> EntityPolicyConfig:
+    """Load and validate an entity's Wake Robin strategic policy targets from
+    YAML or JSON. Author target weights as strings for exact `Decimal`."""
+    p = Path(path)
+    text = p.read_text(encoding="utf-8")
+    if p.suffix.lower() in (".yaml", ".yml"):
+        data = yaml.safe_load(text)
+    elif p.suffix.lower() == ".json":
+        data = json.loads(text)
+    else:
+        raise ValueError(f"unsupported policy extension: {p.suffix!r} (use .yaml/.yml/.json)")
+    if not isinstance(data, dict):
+        raise ValueError(f"policy root must be a mapping; got {type(data)!r}")
+    return EntityPolicyConfig.model_validate(data)
 
 
 # ---- reducers --------------------------------------------------------------
