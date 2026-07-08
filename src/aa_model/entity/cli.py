@@ -17,13 +17,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import re as _re
 from pathlib import Path
 
 from aa_model.entity import (
     content_hash,
     export_study_xlsx,
+    fixture_from_curated_positions,
     load_entity_fixture,
     load_entity_policy,
+    read_investment_summary_positions,
     render_study_markdown,
 )
 
@@ -35,7 +38,24 @@ def build_parser() -> argparse.ArgumentParser:
         prog="aa-entity-study",
         description="Render a Wake Robin entity asset-allocation study.",
     )
-    p.add_argument("--fixture", required=True, type=Path, help="entity fixture YAML/JSON")
+    src = p.add_mutually_exclusive_group(required=True)
+    src.add_argument("--fixture", type=Path, help="entity fixture YAML/JSON")
+    src.add_argument(
+        "--from-investment-summary",
+        dest="inv_summary",
+        type=Path,
+        help="build the fixture from the Investment Summary workbook (needs --entity)",
+    )
+    p.add_argument(
+        "--entity",
+        default=None,
+        help='entity label to filter (with --from-investment-summary), e.g. "Jim\'s Trust / J&D"',
+    )
+    p.add_argument(
+        "--as-of",
+        default="2026-03-31",
+        help="as-of date YYYY-MM-DD when building from the Investment Summary",
+    )
     p.add_argument(
         "--policy",
         type=Path,
@@ -71,7 +91,21 @@ def main(argv: list[str] | None = None) -> int:
             f"--formats must be a non-empty subset of {list(_VALID_FORMATS)}; got {args.formats!r}"
         )
 
-    fixture = load_entity_fixture(args.fixture)
+    if args.inv_summary is not None:
+        if not args.entity:
+            raise SystemExit("--from-investment-summary requires --entity")
+        positions = read_investment_summary_positions(args.inv_summary, args.entity)
+        if not positions:
+            raise SystemExit(f"no positions found for entity {args.entity!r}")
+        eid = "entity_" + (_re.sub(r"[^a-z0-9]+", "_", args.entity.lower()).strip("_") or "x")
+        fixture = fixture_from_curated_positions(
+            positions,
+            entity_id=eid,
+            as_of_date=args.as_of,
+            fixture_version=f"{eid}_{args.as_of}",
+        )
+    else:
+        fixture = load_entity_fixture(args.fixture)
     policy = load_entity_policy(args.policy) if args.policy else None
     if policy is not None and policy.entity_id != fixture.entity_id:
         raise SystemExit(

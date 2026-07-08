@@ -11,6 +11,12 @@ from aa_model.entity.crosswalk import (
     liquidity_tier_for,
     policy_class_for,
     policy_class_from_label,
+    tier_from_label,
+)
+from aa_model.entity.curated import (
+    CuratedPosition,
+    fixture_from_curated_positions,
+    read_investment_summary_positions,
 )
 from aa_model.entity.fixture import (
     PEExposureTotals,
@@ -65,6 +71,7 @@ __all__ = [
     "BurnRate",
     "CashFlow",
     "CashFlowAssumptions",
+    "CuratedPosition",
     "CustodianReconResult",
     "CustodianReconciliation",
     "EntityFixture",
@@ -84,7 +91,10 @@ __all__ = [
     "cash_flow_lens",
     "custodian_reconciliation_lens",
     "export_study_xlsx",
+    "fixture_from_curated_positions",
+    "read_investment_summary_positions",
     "render_study_markdown",
+    "tier_from_label",
     "canonical_dict",
     "canonical_json",
     "content_hash",
