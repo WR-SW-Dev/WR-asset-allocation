@@ -78,3 +78,37 @@ def liquidity_tier_for(liquidity_bucket: str) -> str:
         raise ValueError(
             f"unknown liquidity_bucket {liquidity_bucket!r}; valid: " f"{sorted(_BUCKET_TO_TIER)}"
         ) from None
+
+
+# Firm "Asset Allocation Class" display labels (as authored in the curated
+# Investment Summary) -> Wake Robin policy-class literals. Normalization only
+# (the family has already classified); matched case-insensitively on a
+# collapsed-whitespace, '&'->'and' key. Distinct from policy_class_for, which
+# maps the finer Phase-15 asset_class vocabulary.
+_POLICY_LABEL_TO_CLASS: dict[str, str] = {
+    "re opco stabilized": "re_opco_stabilized",
+    "real estate": "real_estate",
+    "equity": "equity",
+    "private equity": "private_equity",
+    "absolute return": "absolute_return",
+    "fixed income": "fixed_income",
+    "cash and cash alts": "cash_and_cash_alts",
+}
+
+
+def _norm_label(label: str) -> str:
+    return " ".join(label.replace("&", " and ").lower().split())
+
+
+def policy_class_from_label(label: str) -> str:
+    """Normalize a firm policy-class display label (e.g. 'Private Equity',
+    'Cash & Cash Alts') to its policy-class literal. Case/whitespace/`&`
+    insensitive; raises `ValueError` for labels outside the seven classes."""
+    key = _norm_label(label)
+    try:
+        return _POLICY_LABEL_TO_CLASS[key]
+    except KeyError:
+        raise ValueError(
+            f"policy-class label {label!r} is not one of the seven Wake Robin "
+            f"classes; valid labels: {sorted(_POLICY_LABEL_TO_CLASS)}"
+        ) from None
