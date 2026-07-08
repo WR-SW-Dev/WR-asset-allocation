@@ -295,6 +295,78 @@ class QuarterProjectionRecord(BaseModel):
         return self
 
 
+# Household spending categories for the burn-rate lens (committed taxonomy).
+_BURN_CATEGORY_LITERAL = Literal[
+    "home_related",
+    "travel",
+    "vehicle_boat",
+    "lifestyle",
+    "health",
+    "charitable",
+    "insurance",
+    "taxes",
+    "gifts",
+    "education",
+    "non_cash",
+    "other",
+]
+
+
+class BurnCategoryRecord(BaseModel):
+    """Annual household spend for one category across one or more years."""
+
+    model_config = _STRICT
+
+    category: _BURN_CATEGORY_LITERAL
+    amounts_by_year: dict[int, Decimal]  # {year: annual spend}
+
+    @field_validator("amounts_by_year")
+    @classmethod
+    def _amounts_well_formed(cls, v: dict[int, Decimal]) -> dict[int, Decimal]:
+        if not v:
+            raise ValueError("amounts_by_year must be non-empty")
+        for year, amt in v.items():
+            if not (1990 <= year <= 2100):
+                raise ValueError(f"year {year} out of range (1990-2100)")
+            if not amt.is_finite() or amt < 0:
+                raise ValueError(f"amount for {year} must be finite and >= 0; got {amt}")
+        return v
+
+
+class CashFlowAssumptions(BaseModel):
+    """Inputs for the cash-flow / runway lens.
+
+    Living expenses are the burn-without-taxes basis. `policy_cash_pct` is a
+    fraction of the investable base (the lens pulls the base from segments).
+    The what-if overlay adds `scenario_addons_usd` to the draw when enabled.
+    """
+
+    model_config = _STRICT
+
+    living_expenses_annual_usd: Decimal = Field(ge=0)
+    crut_distribution_annual_usd: Decimal = Field(default=Decimal("0"), ge=0)
+    managed_cash_usd: Decimal = Field(ge=0)
+    policy_cash_pct: Decimal = Field(ge=0)
+    reserve_years: Decimal = Field(default=Decimal("2"), ge=0)
+    scenario_enabled: bool = False
+    scenario_addons_usd: dict[str, Decimal] = Field(default_factory=dict)
+
+    @field_validator("policy_cash_pct")
+    @classmethod
+    def _pct_range(cls, v: Decimal) -> Decimal:
+        if v > 1:
+            raise ValueError(f"policy_cash_pct is a fraction in [0,1]; got {v}")
+        return v
+
+    @field_validator("scenario_addons_usd")
+    @classmethod
+    def _addons_non_negative(cls, v: dict[str, Decimal]) -> dict[str, Decimal]:
+        for k, amt in v.items():
+            if not amt.is_finite() or amt < 0:
+                raise ValueError(f"scenario add-on {k!r} must be finite and >= 0; got {amt}")
+        return v
+
+
 class EntityFixture(BaseModel):
     """Deterministic snapshot of one entity's perimeter, account scope,
     balance-sheet segmentation, and PE commitment exposure.
@@ -316,6 +388,10 @@ class EntityFixture(BaseModel):
     holdings: list[HoldingRecord] = Field(default_factory=list)
     # Optional quarterly liquidity cash-flow projection (roll-forward chain).
     liquidity_projection: list[QuarterProjectionRecord] = Field(default_factory=list)
+    # Optional household burn-rate (annual spend by category, by year).
+    burn_rate: list[BurnCategoryRecord] = Field(default_factory=list)
+    # Optional cash-flow / runway assumptions.
+    cash_flow: CashFlowAssumptions | None = None
     # Optional balance-sheet control total (e.g. from the custodian/Archway
     # recon). When set, Σ(segments) must match within tolerance — fail-loud.
     expected_total_nav_usd: Decimal | None = None
@@ -354,6 +430,12 @@ class EntityFixture(BaseModel):
             if seg.segment_key in seen_segments:
                 raise ValueError(f"Duplicate segment_key: {seg.segment_key!r}")
             seen_segments.add(seg.segment_key)
+        # One burn-rate record per category.
+        seen_categories: set[str] = set()
+        for br in self.burn_rate:
+            if br.category in seen_categories:
+                raise ValueError(f"Duplicate burn_rate category: {br.category!r}")
+            seen_categories.add(br.category)
         # PE exposure: unique fund keys, all bound to this entity.
         seen_funds: set[str] = set()
         for fund in self.pe_exposure:
