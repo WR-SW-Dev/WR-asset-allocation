@@ -65,3 +65,23 @@ pe_exposure:
     distributed_to_date_usd: "300000.00"
     nav_usd: "1600000.00"
     unfunded_usd: "200000.00"
+
+# household spend by category, 2023-2025 (annual $). totals: 2023=700k, 2024=750k, 2025=650k
+burn_rate:
+  - {category: home_related, amounts_by_year: {2023: "200000.00", 2024: "210000.00", 2025: "190000.00"}}
+  - {category: travel, amounts_by_year: {2023: "100000.00", 2024: "120000.00", 2025: "80000.00"}}
+  - {category: charitable, amounts_by_year: {2023: "50000.00", 2024: "50000.00", 2025: "50000.00"}}
+  - {category: taxes, amounts_by_year: {2023: "300000.00", 2024: "320000.00", 2025: "280000.00"}}
+  - {category: other, amounts_by_year: {2023: "50000.00", 2024: "50000.00", 2025: "50000.00"}}
+
+# cash-flow / runway assumptions (living expenses = avg burn w/o taxes = 400k)
+cash_flow:
+  living_expenses_annual_usd: "400000.00"
+  crut_distribution_annual_usd: "100000.00"
+  managed_cash_usd: "11000000.00"
+  policy_cash_pct: "0.10"
+  reserve_years: "2"
+  scenario_enabled: false
+  scenario_addons_usd:
+    increased_travel: "50000.00"
+    increased_healthcare: "30000.00"

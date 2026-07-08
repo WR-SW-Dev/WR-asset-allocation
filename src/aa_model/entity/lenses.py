@@ -282,3 +282,127 @@ def liquidity_projection_lens(fixture: EntityFixture) -> LiquidityProjectionLens
         goes_negative=min_ending < _ZERO,
         trajectory=trajectory,
     )
+
+
+# ---- burn rate -------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class BurnRate:
+    years: list[int]
+    total_by_year: dict[int, Decimal] = field(default_factory=dict)
+    without_taxes_by_year: dict[int, Decimal] = field(default_factory=dict)
+    without_charitable_by_year: dict[int, Decimal] = field(default_factory=dict)
+    by_category_total: dict[str, Decimal] = field(default_factory=dict)
+    avg_annual_total: Decimal = _ZERO
+    avg_annual_without_taxes: Decimal = _ZERO
+    avg_quarterly_without_taxes: Decimal = _ZERO
+    lightest_year: int | None = None
+    lightest_year_total: Decimal = _ZERO
+    lightest_year_without_taxes: Decimal = _ZERO
+
+
+def burn_rate_lens(fixture: EntityFixture) -> BurnRate:
+    """Household spend rolled up by year: total, burn-without-taxes,
+    burn-without-charitable, per-category totals, plus normalized averages
+    (annual + quarterly on the without-taxes basis) and the lightest year."""
+    recs = fixture.burn_rate
+    years = sorted({y for r in recs for y in r.amounts_by_year})
+    if not years:
+        return BurnRate(years=[])
+
+    def _sum_year(y: int, exclude: set[str]) -> Decimal:
+        return sum(
+            (r.amounts_by_year.get(y, _ZERO) for r in recs if r.category not in exclude),
+            _ZERO,
+        )
+
+    # `non_cash` is a non-cash adjustment (can be negative), not spend — it is
+    # excluded from the cash-burn "without_*" measures and the normalized
+    # metrics, but IS in the gross total (which matches the workbook's
+    # "Prelim Burn (all categories)").
+    total_by_year = {y: _sum_year(y, set()) for y in years}
+    wo_taxes = {y: _sum_year(y, {"taxes", "non_cash"}) for y in years}
+    wo_charitable = {y: _sum_year(y, {"charitable", "non_cash"}) for y in years}
+    by_cat = {r.category: sum(r.amounts_by_year.values(), _ZERO) for r in recs}
+
+    n = Decimal(len(years))
+    avg_total = sum(total_by_year.values(), _ZERO) / n
+    avg_wo_taxes = sum(wo_taxes.values(), _ZERO) / n
+    lightest = min(years, key=lambda y: total_by_year[y])
+    return BurnRate(
+        years=years,
+        total_by_year=total_by_year,
+        without_taxes_by_year=wo_taxes,
+        without_charitable_by_year=wo_charitable,
+        by_category_total=dict(sorted(by_cat.items())),
+        avg_annual_total=avg_total,
+        avg_annual_without_taxes=avg_wo_taxes,
+        avg_quarterly_without_taxes=avg_wo_taxes / Decimal("4"),
+        lightest_year=lightest,
+        lightest_year_total=total_by_year[lightest],
+        lightest_year_without_taxes=wo_taxes[lightest],
+    )
+
+
+# ---- cash flow / runway ----------------------------------------------------
+
+
+def _runway_years(cash: Decimal, annual_draw: Decimal) -> Decimal | None:
+    """cash / annual_draw in years; None when draw <= 0 (no net draw =
+    effectively unbounded runway)."""
+    if annual_draw <= _ZERO:
+        return None
+    return cash / annual_draw
+
+
+@dataclass(frozen=True)
+class CashFlow:
+    investable_base_usd: Decimal
+    managed_cash_usd: Decimal
+    monthly_living_usd: Decimal
+    policy_target_cash_usd: Decimal
+    cash_overweight_usd: Decimal
+    net_annual_draw_usd: Decimal
+    reserve_amount_usd: Decimal
+    deployable_after_reserve_usd: Decimal
+    runway_current_years: Decimal | None
+    runway_policy_years: Decimal | None
+    scenario_enabled: bool
+    scenario_addon_total_usd: Decimal
+    net_annual_draw_scenario_usd: Decimal
+    runway_current_scenario_years: Decimal | None
+    deployable_after_reserve_scenario_usd: Decimal
+
+
+def cash_flow_lens(fixture: EntityFixture) -> CashFlow:
+    """Living-expense draw vs CRUT inflow → reserve / runway / deployable
+    cash, with a base-vs-scenario (what-if) overlay. Policy target cash is
+    `policy_cash_pct` of the investable base (pulled from segments)."""
+    cf = fixture.cash_flow
+    if cf is None:
+        raise ValueError("fixture has no cash_flow assumptions")
+    base = segment_totals(fixture).investable_usd
+    policy_target = base * cf.policy_cash_pct
+    net_draw = cf.living_expenses_annual_usd - cf.crut_distribution_annual_usd
+    reserve = cf.reserve_years * max(_ZERO, net_draw)
+    addon_total = sum(cf.scenario_addons_usd.values(), _ZERO)
+    net_draw_scn = net_draw + (addon_total if cf.scenario_enabled else _ZERO)
+    reserve_scn = cf.reserve_years * max(_ZERO, net_draw_scn)
+    return CashFlow(
+        investable_base_usd=base,
+        managed_cash_usd=cf.managed_cash_usd,
+        monthly_living_usd=cf.living_expenses_annual_usd / Decimal("12"),
+        policy_target_cash_usd=policy_target,
+        cash_overweight_usd=cf.managed_cash_usd - policy_target,
+        net_annual_draw_usd=net_draw,
+        reserve_amount_usd=reserve,
+        deployable_after_reserve_usd=cf.managed_cash_usd - reserve,
+        runway_current_years=_runway_years(cf.managed_cash_usd, net_draw),
+        runway_policy_years=_runway_years(policy_target, net_draw),
+        scenario_enabled=cf.scenario_enabled,
+        scenario_addon_total_usd=addon_total,
+        net_annual_draw_scenario_usd=net_draw_scn,
+        runway_current_scenario_years=_runway_years(cf.managed_cash_usd, net_draw_scn),
+        deployable_after_reserve_scenario_usd=cf.managed_cash_usd - reserve_scn,
+    )
