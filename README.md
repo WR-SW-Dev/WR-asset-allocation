@@ -1,6 +1,6 @@
 # asset-allocation
 
-SFO asset allocation study model. Research package for studying public allocation, spending/liquidity, and PE pacing on a single quarterly cash-flow ledger.
+SFO asset allocation study model. Research package for studying strategic asset allocation, spending/liquidity, and PE pacing on a single quarterly cash-flow ledger.
 
 - Spec: [SPEC.md](SPEC.md)
 - Scope (authoritative): [PROJECT_SCOPE.md](PROJECT_SCOPE.md)
