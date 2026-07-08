@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Pre-push lint gate — mirrors the CI `core` job's lint step locally so a
+# push (and therefore any PR / merge) cannot reintroduce unformatted or
+# lint-failing code. Enable once per clone with:
+#
+#     git config core.hooksPath hooks
+#
+# Uses the repo-pinned ruff (requirements.txt: ruff==0.4.4). If ruff is not
+# available (e.g. dev deps not installed) the gate degrades to a warning and
+# lets the push through — CI remains the backstop.
+set -uo pipefail
+
+TARGETS=(src tests scripts)
+
+if [ -x ".venv/bin/ruff" ]; then
+  RUFF=".venv/bin/ruff"
+elif command -v ruff >/dev/null 2>&1; then
+  RUFF="ruff"
+else
+  echo "pre-push: ruff not found — skipping lint gate (install requirements-dev.txt). CI will still enforce." >&2
+  exit 0
+fi
+
+echo "pre-push: $RUFF check + format --check ${TARGETS[*]}"
+
+fail=0
+if ! "$RUFF" check "${TARGETS[@]}"; then
+  echo "" >&2
+  echo "pre-push BLOCKED: 'ruff check' found lint errors above. Fix them, then re-push." >&2
+  fail=1
+fi
+
+if ! "$RUFF" format --check "${TARGETS[@]}"; then
+  echo "" >&2
+  echo "pre-push BLOCKED: files are not formatted. Run:" >&2
+  echo "    $RUFF format ${TARGETS[*]}" >&2
+  echo "then commit and re-push." >&2
+  fail=1
+fi
+
+if [ "$fail" -ne 0 ]; then
+  exit 1
+fi
+
+echo "pre-push: lint clean."
+exit 0
