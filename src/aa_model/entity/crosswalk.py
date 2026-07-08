@@ -112,3 +112,28 @@ def policy_class_from_label(label: str) -> str:
             f"policy-class label {label!r} is not one of the seven Wake Robin "
             f"classes; valid labels: {sorted(_POLICY_LABEL_TO_CLASS)}"
         ) from None
+
+
+# Firm liquidity display labels (Investment Summary "Liquidity" column) ->
+# study redemption tier. Distinct from liquidity_tier_for (Phase-15 bucket).
+_LIQUIDITY_LABEL_TO_TIER: dict[str, str] = {
+    "daily": "daily",
+    "monthly": "monthly",
+    "quarterly": "quarterly",
+    "at maturity": "at_maturity",
+}
+
+
+def tier_from_label(label: str | None) -> str | None:
+    """Normalize a liquidity display label ('Daily'/'Monthly'/'Quarterly'/
+    'At Maturity') to a redemption tier. Blank/None -> None (untiered);
+    raises `ValueError` for an unrecognized non-empty label."""
+    if label is None or not label.strip():
+        return None
+    key = " ".join(label.lower().split())
+    try:
+        return _LIQUIDITY_LABEL_TO_TIER[key]
+    except KeyError:
+        raise ValueError(
+            f"liquidity label {label!r} is not one of " f"{sorted(_LIQUIDITY_LABEL_TO_TIER)}"
+        ) from None
