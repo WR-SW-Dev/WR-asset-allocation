@@ -67,16 +67,21 @@ def test_duplicate_burn_category_raises() -> None:
         )
 
 
-def test_burn_negative_amount_raises() -> None:
-    with pytest.raises(ValidationError, match=">= 0"):
-        EntityFixture.model_validate(
-            {
-                "fixture_version": "t",
-                "entity_id": "e1",
-                "as_of_date": "2026-04-30",
-                "burn_rate": [{"category": "travel", "amounts_by_year": {2025: "-5"}}],
-            }
-        )
+def test_burn_allows_negative_noncash() -> None:
+    # non-cash adjustments / refunds are legitimately negative (real J&D data)
+    fx = EntityFixture.model_validate(
+        {
+            "fixture_version": "t",
+            "entity_id": "e1",
+            "as_of_date": "2026-04-30",
+            "burn_rate": [
+                {"category": "other", "amounts_by_year": {2025: "100000"}},
+                {"category": "non_cash", "amounts_by_year": {2025: "-40000"}},
+            ],
+        }
+    )
+    b = burn_rate_lens(fx)
+    assert b.total_by_year[2025] == Decimal("60000")  # 100k + (-40k)
 
 
 # ---- cash flow / runway ----------------------------------------------------

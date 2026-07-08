@@ -328,8 +328,10 @@ class BurnCategoryRecord(BaseModel):
         for year, amt in v.items():
             if not (1990 <= year <= 2100):
                 raise ValueError(f"year {year} out of range (1990-2100)")
-            if not amt.is_finite() or amt < 0:
-                raise ValueError(f"amount for {year} must be finite and >= 0; got {amt}")
+            # Amounts may be negative: the "non_cash" category (and occasional
+            # adjustments/refunds) carry credits. Only non-finite is invalid.
+            if not amt.is_finite():
+                raise ValueError(f"amount for {year} must be finite; got {amt}")
         return v
 
 

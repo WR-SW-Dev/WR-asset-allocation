@@ -299,6 +299,7 @@ class BurnRate:
     avg_quarterly_without_taxes: Decimal = _ZERO
     lightest_year: int | None = None
     lightest_year_total: Decimal = _ZERO
+    lightest_year_without_taxes: Decimal = _ZERO
 
 
 def burn_rate_lens(fixture: EntityFixture) -> BurnRate:
@@ -310,15 +311,19 @@ def burn_rate_lens(fixture: EntityFixture) -> BurnRate:
     if not years:
         return BurnRate(years=[])
 
-    def _sum_year(y: int, exclude: str | None = None) -> Decimal:
+    def _sum_year(y: int, exclude: set[str]) -> Decimal:
         return sum(
-            (r.amounts_by_year.get(y, _ZERO) for r in recs if r.category != exclude),
+            (r.amounts_by_year.get(y, _ZERO) for r in recs if r.category not in exclude),
             _ZERO,
         )
 
-    total_by_year = {y: _sum_year(y) for y in years}
-    wo_taxes = {y: _sum_year(y, "taxes") for y in years}
-    wo_charitable = {y: _sum_year(y, "charitable") for y in years}
+    # `non_cash` is a non-cash adjustment (can be negative), not spend — it is
+    # excluded from the cash-burn "without_*" measures and the normalized
+    # metrics, but IS in the gross total (which matches the workbook's
+    # "Prelim Burn (all categories)").
+    total_by_year = {y: _sum_year(y, set()) for y in years}
+    wo_taxes = {y: _sum_year(y, {"taxes", "non_cash"}) for y in years}
+    wo_charitable = {y: _sum_year(y, {"charitable", "non_cash"}) for y in years}
     by_cat = {r.category: sum(r.amounts_by_year.values(), _ZERO) for r in recs}
 
     n = Decimal(len(years))
@@ -336,6 +341,7 @@ def burn_rate_lens(fixture: EntityFixture) -> BurnRate:
         avg_quarterly_without_taxes=avg_wo_taxes / Decimal("4"),
         lightest_year=lightest,
         lightest_year_total=total_by_year[lightest],
+        lightest_year_without_taxes=wo_taxes[lightest],
     )
 
 
