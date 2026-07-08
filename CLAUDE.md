@@ -75,6 +75,21 @@ example.
 Note: `cvxportfolio` and `riskfolio` are optional extras; both are pulled in by
 `requirements-dev.txt`. Without them, gated tests skip / `ModuleNotFoundError` at collection.
 
+### Pre-push lint gate (enable once per clone)
+
+A committed `hooks/pre-push` mirrors the CI `core` lint step (`ruff check` +
+`ruff format --check`) so a push — and therefore any PR / merge — cannot
+reintroduce unformatted or lint-failing code. Enable it once after cloning:
+
+```
+git config core.hooksPath hooks
+```
+
+The hook uses the repo-pinned `ruff`; if ruff is unavailable it warns and lets
+the push through (CI stays the backstop). If it blocks, run
+`ruff format src tests scripts`, commit, and re-push. Applies to linked
+worktrees too (they share the repo config).
+
 ## Code intelligence (codegraph)
 
 This repo is indexed by codegraph — a SQLite knowledge graph of every symbol,
