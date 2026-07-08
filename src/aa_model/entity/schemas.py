@@ -369,6 +369,57 @@ class CashFlowAssumptions(BaseModel):
         return v
 
 
+class CustodianReconciliation(BaseModel):
+    """A custodian statement reconciliation for one account.
+
+    `ending_value_usd` is always required (the anchor). The roll-forward
+    inputs (`beginning_value_usd` + flows) are optional — a statement may be
+    *pending*, leaving only the ending value and holdings known. When
+    `beginning_value_usd` is present the roll-forward is enforced fail-loud:
+    `ending == beginning + additions - subtractions + change` within
+    tolerance. `additions` / `subtractions` are magnitudes (>= 0).
+    `holdings_by_type_usd` is the statement's by-type breakdown; the lens
+    reconciles its sum to the ending value (advisory — accruals may differ).
+    """
+
+    model_config = _STRICT
+
+    account_id: str
+    beginning_value_usd: Decimal | None = None
+    additions_usd: Decimal = Field(default=Decimal("0"), ge=0)
+    subtractions_usd: Decimal = Field(default=Decimal("0"), ge=0)
+    change_in_value_usd: Decimal = Decimal("0")  # may be negative (mark-downs)
+    ending_value_usd: Decimal
+    holdings_by_type_usd: dict[str, Decimal] = Field(default_factory=dict)
+
+    @field_validator("holdings_by_type_usd")
+    @classmethod
+    def _holdings_finite(cls, v: dict[str, Decimal]) -> dict[str, Decimal]:
+        for k, amt in v.items():
+            if not amt.is_finite():
+                raise ValueError(f"holdings_by_type_usd[{k!r}] must be finite; got {amt}")
+        return v
+
+    @model_validator(mode="after")
+    def _roll_forward(self) -> CustodianReconciliation:
+        # Only when the statement's opening side is available (not pending).
+        if self.beginning_value_usd is None:
+            return self
+        implied = (
+            self.beginning_value_usd
+            + self.additions_usd
+            - self.subtractions_usd
+            + self.change_in_value_usd
+        )
+        if abs(self.ending_value_usd - implied) > _RECON_TOLERANCE:
+            raise ValueError(
+                f"account {self.account_id!r}: ending_value_usd "
+                f"({self.ending_value_usd}) != beginning + additions - "
+                f"subtractions + change ({implied})"
+            )
+        return self
+
+
 class EntityFixture(BaseModel):
     """Deterministic snapshot of one entity's perimeter, account scope,
     balance-sheet segmentation, and PE commitment exposure.
@@ -394,6 +445,8 @@ class EntityFixture(BaseModel):
     burn_rate: list[BurnCategoryRecord] = Field(default_factory=list)
     # Optional cash-flow / runway assumptions.
     cash_flow: CashFlowAssumptions | None = None
+    # Optional custodian statement reconciliations (one per account).
+    custodian_reconciliations: list[CustodianReconciliation] = Field(default_factory=list)
     # Optional balance-sheet control total (e.g. from the custodian/Archway
     # recon). When set, Σ(segments) must match within tolerance — fail-loud.
     expected_total_nav_usd: Decimal | None = None
@@ -438,6 +491,12 @@ class EntityFixture(BaseModel):
             if br.category in seen_categories:
                 raise ValueError(f"Duplicate burn_rate category: {br.category!r}")
             seen_categories.add(br.category)
+        # One custodian reconciliation per account.
+        seen_recon: set[str] = set()
+        for rec in self.custodian_reconciliations:
+            if rec.account_id in seen_recon:
+                raise ValueError(f"Duplicate custodian reconciliation account: {rec.account_id!r}")
+            seen_recon.add(rec.account_id)
         # PE exposure: unique fund keys, all bound to this entity.
         seen_funds: set[str] = set()
         for fund in self.pe_exposure:

@@ -406,3 +406,51 @@ def cash_flow_lens(fixture: EntityFixture) -> CashFlow:
         runway_current_scenario_years=_runway_years(cf.managed_cash_usd, net_draw_scn),
         deployable_after_reserve_scenario_usd=cf.managed_cash_usd - reserve_scn,
     )
+
+
+# ---- custodian reconciliation ----------------------------------------------
+
+
+@dataclass(frozen=True)
+class CustodianReconResult:
+    account_id: str
+    beginning_value_usd: Decimal | None  # None when statement pending
+    ending_value_usd: Decimal
+    net_flow_usd: Decimal | None  # additions - subtractions; None when pending
+    change_in_value_usd: Decimal
+    holdings_by_type_usd: dict[str, Decimal]
+    holdings_total_usd: Decimal
+    holdings_reconciles: bool  # by-type total == ending within tolerance
+    holdings_delta_usd: Decimal
+    statement_pending: bool  # roll-forward side unavailable
+
+
+def custodian_reconciliation_lens(
+    fixture: EntityFixture, *, recon_tolerance: Decimal = Decimal("1.00")
+) -> list[CustodianReconResult]:
+    """Per custodian account: surface the net external flow (when the statement
+    is available) and reconcile the holdings-by-type breakdown to the ending
+    statement value. The account-value roll-forward is enforced by the fixture
+    when present; the by-type reconciliation is advisory (accruals may differ).
+    Ordered by account_id; types sorted."""
+    results: list[CustodianReconResult] = []
+    for rec in sorted(fixture.custodian_reconciliations, key=lambda r: r.account_id):
+        by_type = dict(sorted(rec.holdings_by_type_usd.items()))
+        total = sum(by_type.values(), _ZERO)
+        reconciles = (not by_type) or abs(total - rec.ending_value_usd) <= recon_tolerance
+        pending = rec.beginning_value_usd is None
+        results.append(
+            CustodianReconResult(
+                account_id=rec.account_id,
+                beginning_value_usd=rec.beginning_value_usd,
+                ending_value_usd=rec.ending_value_usd,
+                net_flow_usd=None if pending else rec.additions_usd - rec.subtractions_usd,
+                change_in_value_usd=rec.change_in_value_usd,
+                holdings_by_type_usd=by_type,
+                holdings_total_usd=total,
+                holdings_reconciles=reconciles,
+                holdings_delta_usd=total - rec.ending_value_usd,
+                statement_pending=pending,
+            )
+        )
+    return results

@@ -58,6 +58,7 @@ def canonical_dict(fixture: EntityFixture) -> dict[str, Any]:
     fx.holdings.sort(key=lambda h: h.holding_key)
     fx.liquidity_projection.sort(key=lambda r: r.period)
     fx.burn_rate.sort(key=lambda b: b.category)
+    fx.custodian_reconciliations.sort(key=lambda r: r.account_id)
     # mode="python" keeps Decimal/date as objects; _canon handles Decimal,
     # and dates are converted below via the json default hook.
     raw = fx.model_dump(mode="python")
