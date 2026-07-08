@@ -39,6 +39,7 @@ from aa_model.entity.lenses import (
     liquidity_lens,
     liquidity_projection_lens,
 )
+from aa_model.entity.render import export_study_xlsx, render_study_markdown
 from aa_model.entity.schemas import (
     BalanceSheetSegmentRecord,
     BurnCategoryRecord,
@@ -78,6 +79,8 @@ __all__ = [
     "burn_rate_lens",
     "cash_flow_lens",
     "custodian_reconciliation_lens",
+    "export_study_xlsx",
+    "render_study_markdown",
     "canonical_dict",
     "canonical_json",
     "content_hash",
