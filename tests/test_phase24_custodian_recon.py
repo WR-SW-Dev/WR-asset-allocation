@@ -38,6 +38,31 @@ def test_custodian_recon_lens(synth_fixture: EntityFixture) -> None:
         "fixed_income_etp",
         "mutual_funds_stock",
     ]  # sorted
+    assert r.statement_pending is False
+
+
+def test_pending_statement_ending_and_holdings_only() -> None:
+    # Statement not yet loaded: no beginning/flows, only ending + holdings.
+    fx = EntityFixture.model_validate(
+        {
+            "fixture_version": "t",
+            "entity_id": "e1",
+            "as_of_date": "2026-04-30",
+            "custodian_reconciliations": [
+                {
+                    "account_id": "acct_1423",
+                    "ending_value_usd": "5000000",
+                    "holdings_by_type_usd": {"core_cash": "1000000", "equity_etp": "4000000"},
+                }
+            ],
+        }
+    )
+    r = custodian_reconciliation_lens(fx)[0]
+    assert r.statement_pending is True
+    assert r.beginning_value_usd is None
+    assert r.net_flow_usd is None
+    assert r.holdings_total_usd == Decimal("5000000")
+    assert r.holdings_reconciles  # ties to ending
 
 
 def _base() -> dict:

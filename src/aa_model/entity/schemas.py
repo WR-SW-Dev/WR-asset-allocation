@@ -372,17 +372,20 @@ class CashFlowAssumptions(BaseModel):
 class CustodianReconciliation(BaseModel):
     """A custodian statement reconciliation for one account.
 
-    Account-value roll-forward (fail-loud): `ending == beginning + additions
-    - subtractions + change_in_value` within tolerance. `additions` /
-    `subtractions` are magnitudes (>= 0). `holdings_by_type_usd` is the
-    statement's by-type breakdown; the lens reconciles its sum to the ending
-    value (advisory — accruals may differ).
+    `ending_value_usd` is always required (the anchor). The roll-forward
+    inputs (`beginning_value_usd` + flows) are optional — a statement may be
+    *pending*, leaving only the ending value and holdings known. When
+    `beginning_value_usd` is present the roll-forward is enforced fail-loud:
+    `ending == beginning + additions - subtractions + change` within
+    tolerance. `additions` / `subtractions` are magnitudes (>= 0).
+    `holdings_by_type_usd` is the statement's by-type breakdown; the lens
+    reconciles its sum to the ending value (advisory — accruals may differ).
     """
 
     model_config = _STRICT
 
     account_id: str
-    beginning_value_usd: Decimal
+    beginning_value_usd: Decimal | None = None
     additions_usd: Decimal = Field(default=Decimal("0"), ge=0)
     subtractions_usd: Decimal = Field(default=Decimal("0"), ge=0)
     change_in_value_usd: Decimal = Decimal("0")  # may be negative (mark-downs)
@@ -399,6 +402,9 @@ class CustodianReconciliation(BaseModel):
 
     @model_validator(mode="after")
     def _roll_forward(self) -> CustodianReconciliation:
+        # Only when the statement's opening side is available (not pending).
+        if self.beginning_value_usd is None:
+            return self
         implied = (
             self.beginning_value_usd
             + self.additions_usd
