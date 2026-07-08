@@ -29,6 +29,7 @@ cvxportfolio = ["cvxportfolio==1.5.1"]
 
 [project.scripts]
 aa-model = "aa_model.cli.main:main"
+aa-entity-study = "aa_model.entity.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
