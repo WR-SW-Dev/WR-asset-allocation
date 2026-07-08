@@ -85,3 +85,17 @@ cash_flow:
   scenario_addons_usd:
     increased_travel: "50000.00"
     increased_healthcare: "30000.00"
+
+# custodian statement reconciliation: roll-forward 10M + 0.5M - 0.3M + 0.8M = 11M;
+# holdings-by-type sum (2M+4M+5M) = 11M ties to ending.
+custodian_reconciliations:
+  - account_id: acct_synth_brokerage
+    beginning_value_usd: "10000000.00"
+    additions_usd: "500000.00"
+    subtractions_usd: "300000.00"
+    change_in_value_usd: "800000.00"
+    ending_value_usd: "11000000.00"
+    holdings_by_type_usd:
+      core_cash: "2000000.00"
+      mutual_funds_stock: "4000000.00"
+      fixed_income_etp: "5000000.00"
