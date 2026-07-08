@@ -12,6 +12,7 @@ from aa_model.entity import (
     holdings_from_positions,
     liquidity_tier_for,
     policy_class_for,
+    policy_class_from_label,
 )
 from aa_model.ingestion.schemas_position import PositionRecord
 
@@ -165,3 +166,29 @@ def test_bridged_holdings_reconcile_in_lens() -> None:
     grp = {g.policy_class: g for g in holdings_detail_lens(fx).groups}["equity"]
     assert grp.subtotal_usd == Decimal("1000")
     assert grp.reconciles
+
+
+# ---- firm policy-class label normalizer ------------------------------------
+
+
+@pytest.mark.parametrize(
+    "label,expected",
+    [
+        ("Fixed Income", "fixed_income"),
+        ("Private Equity", "private_equity"),
+        ("Equity", "equity"),
+        ("Real Estate", "real_estate"),
+        ("Absolute Return", "absolute_return"),
+        ("Cash & Cash Alts", "cash_and_cash_alts"),
+        ("RE OpCo Stabilized", "re_opco_stabilized"),
+        ("  private   equity  ", "private_equity"),  # whitespace-insensitive
+        ("CASH AND CASH ALTS", "cash_and_cash_alts"),  # case + '&'/'and'
+    ],
+)
+def test_policy_class_from_label(label: str, expected: str) -> None:
+    assert policy_class_from_label(label) == expected
+
+
+def test_policy_class_from_label_unknown_raises() -> None:
+    with pytest.raises(ValueError, match="not one of the seven Wake Robin"):
+        policy_class_from_label("Crypto")

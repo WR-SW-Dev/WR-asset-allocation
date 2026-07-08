@@ -7,7 +7,11 @@ segmentation, and PE commitment exposure — plus the core allocation lenses
 """
 
 from aa_model.entity.bridge import holdings_from_positions
-from aa_model.entity.crosswalk import liquidity_tier_for, policy_class_for
+from aa_model.entity.crosswalk import (
+    liquidity_tier_for,
+    policy_class_for,
+    policy_class_from_label,
+)
 from aa_model.entity.fixture import (
     PEExposureTotals,
     SegmentTotals,
@@ -88,6 +92,7 @@ __all__ = [
     "holdings_from_positions",
     "liquidity_tier_for",
     "policy_class_for",
+    "policy_class_from_label",
     "liquidity_lens",
     "liquidity_projection_lens",
     "load_entity_fixture",
