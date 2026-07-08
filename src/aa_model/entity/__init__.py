@@ -6,6 +6,8 @@ segmentation, and PE commitment exposure — plus the core allocation lenses
 ``docs/phase_24_entity_study_design_lock.md``.
 """
 
+from aa_model.entity.bridge import holdings_from_positions
+from aa_model.entity.crosswalk import liquidity_tier_for, policy_class_for
 from aa_model.entity.fixture import (
     PEExposureTotals,
     SegmentTotals,
@@ -62,6 +64,9 @@ __all__ = [
     "canonical_json",
     "content_hash",
     "holdings_detail_lens",
+    "holdings_from_positions",
+    "liquidity_tier_for",
+    "policy_class_for",
     "liquidity_lens",
     "liquidity_projection_lens",
     "load_entity_fixture",
