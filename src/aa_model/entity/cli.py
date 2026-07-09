@@ -1,8 +1,8 @@
 """Entity study CLI — one command to render a Wake Robin study.
 
     python scripts/run_entity_study.py \\
-        --fixture data/external/entity_jd_local.yaml \\
-        --policy  data/external/entity_jd_policy_local.yaml
+        --fixture data/external/entity_jims_trust_full_local.yaml \\
+        --policy  data/external/entity_jims_trust_full_policy_local.yaml
 
 Registered as ``aa-entity-study`` in pyproject ``[project.scripts]``.
 

@@ -2,8 +2,8 @@
 
 Usage::
 
-    python scripts/run_entity_study.py --fixture data/external/entity_jd_local.yaml \\
-        --policy data/external/entity_jd_policy_local.yaml
+    python scripts/run_entity_study.py --fixture data/external/entity_jims_trust_full_local.yaml \\
+        --policy data/external/entity_jims_trust_full_policy_local.yaml
     python scripts/run_entity_study.py --fixture <f> --dry-run
 """
 
