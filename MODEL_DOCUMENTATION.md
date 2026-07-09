@@ -11908,7 +11908,25 @@ assumptions are incomplete.**
 
 ---
 
-## Model buildout roadmap (2026-05-03)
+## Model buildout roadmap (2026-05-03; updated 2026-07-08)
+
+### Recently shipped (since 2026-05-15)
+
+- **Monte Carlo hardening** — closed-form required-reserves solve,
+  cross-process-stable seed derivation. See the Monte Carlo status
+  subsection below. Closes L2 open-architecture item at the
+  engine level; live-data calibration still gated on L19/L20/Phase 23.
+- **Morningstar Direct integrations** — (1) file-based 36-index
+  trailing-return ingestion pathway for the AA model, and (2) optional
+  empirical CMA calibration sourced from the Morningstar benchmark
+  feed. See **Morningstar Direct data integration** below.
+- **Phase 24 — entity dimension (J&D pilot; Jim's Trust one-command
+  capability).** The model now has a first-class per-entity study path
+  (fixture → 8 analytical lenses → markdown/xlsx 11-tab renderer → CLI),
+  validated to the penny against the firm's real J&D workbook, and a
+  committed reader for the canonical Investment Summary workbook so a
+  study for any entity in that workbook (e.g. Jim's Trust) is a single
+  CLI command with no hand-built fixture. See **Phase 24 design** below.
 
 ### Near-term gates (ordered)
 
@@ -11945,7 +11963,7 @@ needs the full terms populated: lockup periods, notice days, gate
 thresholds, side-pocket flags, fee basis, management fee bps,
 incentive fee / carry, capital-call notice days.
 
-### Monte Carlo / Stochastic Regime Layer — Implementation Status (as of 2026-05-15)
+### Monte Carlo / Stochastic Regime Layer — Implementation Status (as of 2026-07-06)
 
 **BUILT for synthetic stress testing; NOT YET DECISION-GRADE.**
 
@@ -11956,12 +11974,35 @@ Framework complete (commits `d2c3144` through `9b34373`):
 - **MC-2** Liquidity stress integration (`971379f`) — paths → coverage metrics, breach detection
 - **MC-3** Reporting layer (`9b34373`) — CSV summary, parquet paths, markdown report, JSON manifest
 
+**Post-merge hardening (2026-07-06), closes the L2 open-architecture item:**
+
+- **`580521f`** — required reserves are now computed by a **closed-form
+  solve**, not the earlier proxy approximation. Removes a source of
+  systematic bias in breach-probability estimates under stress paths.
+- **`98295ca`** — per-path seed derivation made **cross-process stable**.
+  Previously, seed derivation could vary across process/worker boundaries,
+  which silently broke the "same seed + config → byte-stable output"
+  guarantee under parallel execution. Fixed so reproducibility holds
+  regardless of execution topology.
+- **`22aceb9`** — docs fix: corrected a stale comment in `schemas.py`
+  describing `distributable_income`; no behavior change.
+
+This closes the long-standing **L2 open-architecture item** (previously
+"deferred until deterministic SFO layers honest"). L2 is no longer
+purely aspirational scaffolding — the simulation core, stress
+integration, reporting layer, and reserve/seed correctness are shipped
+and tested. What remains before decision-grade status is calibration
+against real client data (see gates below), not further core-engine
+work.
+
 Current state:
 
-- ✅ Deterministic reproducibility (same seed + config → byte-stable output)
+- ✅ Deterministic reproducibility (same seed + config → byte-stable
+  output, now verified stable across processes)
 - ✅ Opt-in only (no Monte Carlo unless explicitly configured)
 - ✅ Deterministic layer unchanged (existing liquidity coverage unaffected)
 - ✅ Advisory-only outputs (explicitly marked as not decision-grade in reports)
+- ✅ Required reserves via closed-form solve (no longer a proxy)
 - ❌ Live client-data integration (awaiting L19, L20, Phase 23)
 - ❌ Hard policy gates or decision automation
 - ❌ Real manager terms, entity cash flows, RE stress calibration
@@ -11990,3 +12031,258 @@ Entity-governance restrictions
 Stress / liquidity scenarios
 Stochastic STAIRS / regime-dependent returns
 ```
+
+---
+
+## Morningstar Direct data integration (2026-07-06 – 2026-07-07)
+
+Two independent, advisory-only ingestion pathways from Morningstar
+Direct. Neither is imported by the orchestrator or by any allocator;
+production allocation recommendations are byte-unchanged by either.
+
+### Empirical CMA calibration from the Morningstar benchmark feed (`d2e3da1`, merged `cbff447`, style `24fe8b7`)
+
+**What.** `src/aa_model/assumptions/benchmark_calibration.py` adds
+`empirical_moments()` and a `to_cma_yaml_dict()` overlay that map
+allocation buckets to public benchmark proxies
+(`configs/benchmark_proxies.yaml`: cash / public_bond / public_equity —
+`pe_buyout` intentionally omitted, no public proxy) and derive
+empirical annualized vol, a correlation matrix, and trailing returns
+from the `morningstar_feed` package's daily total-return history.
+
+**Import boundary.** Soft/lazy import of `morningstar_feed`, with a
+`MORNINGSTAR_FEED_DIR` fallback and a clear error if the package is
+unavailable — this module is opt-in and never required to run a study.
+
+**CLI.** `scripts/calibrate_cma_from_benchmarks.py` — read-only
+diagnostic + candidate generator. `--write` emits
+`configs/cma_empirical.yaml` for human review; it **never overwrites**
+the production `configs/cma.yaml`.
+
+**Purpose.** Informs or cross-checks the hand-set CMAs in
+`configs/cma.yaml`. It is a calibration aid, not a data source the
+model consumes automatically — promoting an empirical CMA into
+production remains an explicit, human-reviewed edit to `cma.yaml`.
+
+**Tests.** `tests/test_benchmark_calibration.py` (synthetic feed
+fixtures).
+
+**Note.** A concurrent working session independently built a matching
+version of this same adapter on the same day — a reminder that this
+repo has been worked on by concurrent sessions against the same
+checkout. No functional consequence here since the two versions
+matched and only one was merged.
+
+### Morningstar Direct index-return ingestion pathway (`df033ef`, PR #8)
+
+**What.** A durable, file-based ingestion path for Morningstar
+Direct index returns, independent of and complementary to the
+live-daily-feed CMA adapter above:
+
+- `configs/morningstar_index_universe.yaml` — 36-index universe
+  declaration.
+- `configs/asset_class_index_map.yaml` — asset-class → index bridge.
+- `src/aa_model/ingestion/morningstar_schemas.py` — Pydantic-validated
+  parser/normalizer schemas.
+- `src/aa_model/ingestion/morningstar_returns.py` — normalizer that
+  emits a long-by-horizon return store with coverage and quality flags
+  (stale series, short-history series both flagged, never silently
+  dropped).
+- `scripts/import_morningstar_index_returns.py` — dry-run-default CLI
+  importer.
+- `docs/morningstar_index_returns_spec.md` — spec doc.
+- `tests/test_morningstar_index_returns.py` — 17 tests, synthetic
+  fixtures only.
+
+**Data shape.** The Morningstar Direct export is a **trailing-return
+snapshot**, not a daily return time series — the "1M" column is one
+monthly observation, not 30 daily rows. The normalizer's coverage
+flags exist specifically to catch a caller treating this as anything
+other than a point-in-time snapshot.
+
+**Validated (dry run) against the 2026-06-30 export:** all 36 indices
+captured, 324 normalized rows, stale/short-history series correctly
+flagged.
+
+**Scope boundary.** Licensed raw exports and any series/reports
+derived from them are gitignored — only code, schemas, configs, docs,
+tiny synthetic fixtures, and tests are committed. Live/API fetch is
+intentionally deferred (documented TODO in the spec doc); this phase
+is file-based ingestion only.
+
+**Relationship to the benchmark-calibration adapter above.** The two
+pathways are deliberately separate: this one ingests point-in-time
+index-level trailing returns for reporting/coverage purposes; the
+benchmark-calibration adapter derives empirical CMA moments from daily
+total-return history via the `morningstar_feed` package. Neither
+depends on the other; neither is wired into the orchestrator.
+
+---
+
+## Phase 24 design — entity dimension (J&D pilot; Jim's Trust one-command capability)
+
+**Goal.** Give the model a first-class **entity** dimension and
+reproduce the firm's standard **Wake Robin 11-tab asset-allocation
+study** for a single entity, deterministically, from source documents
+the model already ingests. Prior to Phase 24 a "study" was one
+`StudyConfig` → one run with no entity object above the household
+level.
+
+**Pilot entity:** J&D Trust (Jim & Donna household; James W.F. Brooks
+Trust). Source template: the firm's real `JWB Trust Asset Allocation
+Study` workbook (11 tabs) — used as blueprint and validation oracle,
+never committed, never mutated. Same privacy posture as Phase 14/23:
+committed code is generic/methodology-only; every client-specific
+artifact (fixtures, manifests, oracle notes, rendered studies) lives
+gitignored under `data/external/*_local` / `configs/*_local.yaml`.
+
+### Architecture
+
+`EntityStudyConfig` **wraps** `StudyConfig` — the no-entity path stays
+byte-identical. New package `src/aa_model/entity/`:
+
+- `schemas.py` — `EntityFixture`, `BalanceSheetSegmentRecord`,
+  `PECommitmentExposureRecord`, `HoldingRecord`,
+  `EntityPolicyConfig` (7 Wake Robin policy classes: RE OpCo
+  Stabilized, Real Estate, Equity, PE, Absolute Return, Fixed Income,
+  Cash), `QuarterProjectionRecord`. Money is `Decimal` throughout for
+  exact reconciliation.
+- `fixture.py` — `canonical_dict` / `canonical_json` / `content_hash`
+  / `load_entity_fixture` + `segment_totals` / `pe_exposure_totals`
+  reducers.
+- `crosswalk.py` — `policy_class_from_label()` (6-label curated-source
+  normalizer, fail-loud on unmapped input) and `tier_from_label()`
+  (liquidity tier bridge); a separate asset_class+bucket→policy
+  crosswalk (`entity/crosswalk.py`, from PR #11) for finer Phase-15
+  sources, with RE disambiguated and fail-loud on
+  infra/commodity/direct_operating/other.
+- `bridge.py` — `holdings_from_positions()`: Phase-15 `PositionRecord`
+  → `HoldingRecord`, float→`Decimal` at the boundary, URL-safe deduped
+  keys.
+- `curated.py` — `CuratedPosition` + `fixture_from_curated_positions()`
+  (policy-classed rows → holdings + policy×tier investable segments +
+  PE exposure; reconciles) and `read_investment_summary_positions()`
+  (column-mapped, entity-filtered, read-only xlsx reader; defaults
+  match the canonical Investment Summary workbook's "Data" sheet
+  layout).
+- `lenses.py` — 8 analytical lenses, one per source 11-tab section
+  that has a data source today: balance_sheet, allocation_vs_target,
+  liquidity (coverage), holdings_detail, PE/alternatives exposure,
+  burn_rate, cash_flow/runway, custodian (Fidelity) reconciliation.
+- `render.py` — `render_study_markdown()` (11 sections; the
+  allocation-vs-target section renders only when a policy is supplied)
+  and `export_study_xlsx()` (fresh workbook, one sheet per section,
+  never touches the source file; deterministic, display-format only).
+- `cli.py` + `scripts/run_entity_study.py` (`aa-entity-study` entry
+  point) — `--fixture [--policy] [--out] [--formats md,xlsx]
+  [--dry-run]`, or the curated-source path below. Loads + validates,
+  computes `content_hash`, renders, writes a deterministic
+  `manifest.json` (no wall-clock timestamp). Default output is
+  gitignored `data/processed/entity_studies/<entity_id>_<hash8>/`.
+
+**11 tabs → model layers:** Balance_Sheet → NAV≠liquidity
+segmentation; Allocation-vs-Target → `EntityPolicyConfig`;
+Holdings_Detail → position ingestion (Phase 15) via `bridge.py`;
+PE_Alternatives → PE commitment book (Phase 23 territory);
+Liquidity_Lens → coverage (Phase 16); Burn_Rate / Cash_Flow →
+spending (Phase 12); Liquidity_Projection → quarterly ledger roll-
+forward; Fidelity_Recon → reconciliation gates (Phase 21 pattern).
+
+### One-command study from the canonical Investment Summary workbook (`59809e4`, PR #17)
+
+The CLI gains `--from-investment-summary PATH --entity LABEL`
+(mutually exclusive with `--fixture`), which reads the canonical
+Investment Summary workbook directly — no hand-built fixture required:
+
+```
+cd "/mnt/c/Projects/asset allocation/asset-allocation" && \
+python scripts/run_entity_study.py \
+  --from-investment-summary "<Investment Summary for Categorization workbook path>.xlsx" \
+  --entity "Jim's Trust / J&D" \
+  [--policy data/external/entity_jims_trust_policy_local.yaml]
+```
+
+This filters the workbook's "Invested Entities" column for the given
+label, maps each row's "Asset Allocation Class" through
+`policy_class_from_label()`, builds holdings + policy×tier investable
+segments + PE/alt fund exposure (from commitment/unfunded/NAV
+columns), and renders the full study to
+`data/processed/entity_studies/<entity_id>_<hash8>/{study.md,xlsx,
+manifest.json}`.
+
+**Any of the ~25 entities in the workbook's Invested Entities column
+can be studied this way** — Jim's Trust was the first one run
+end-to-end (41 positions; 11 investable segments; 26 PE/alt funds;
+class mix fixed_income 19 / equity 8 / PE 6 / absolute_return 4 /
+real_estate 3 / cash 1), not a special case in the code.
+
+**Allocation-vs-target caveat.** The workbook's own "Allocation" sheet
+carries strategic targets for other entities (TM Brooks / SJ Brooks /
+J&D CRUT / LLCs / OpCos) — not for Jim's Trust specifically. When a
+policy file is supplied for a sub-entity that doesn't have its own
+published target, using the household Wake Robin target as a stand-in
+will show large gaps by construction (sub-entities specialize by
+design — e.g. Jim's Trust is FI-heavy, equity-light). **This is not a
+rebalancing signal for that sub-entity** — treat the allocation-vs-
+target section as informational only unless the entity has its own
+authored policy target.
+
+### Oracle validation (real J&D workbook, gitignored fixture, never committed)
+
+- Balance-sheet investable / structural / total NAV reconcile **to the
+  penny**.
+- Σ PE commitment reconciles **to the penny**. Finding: 3 funds are
+  over-called (paid-in > commitment, recallable) — schema tightened to
+  drop the `called ≤ commitment` invariant; unfunded is floor-0
+  (`max(0, commitment − called)`).
+- Liquidity projection Q1 2025 – Q4 2031 reproduces exactly
+  (roll-forward + chain continuity hold, zero adjustment residual).
+- Holdings detail: all 6 policy classes reconcile to the penny against
+  the workbook's Holdings_Detail tab (47 real positions; $39.245M
+  investable base).
+- Burn-rate and cash-flow/runway lenses reconcile against the
+  workbook's Burn_Rate / Cash_Flow tabs (totals, without-taxes figures,
+  3-year average, net draw, policy target, reserve/deployable,
+  runways, base-vs-scenario what-if all tie). `without_charitable` and
+  a few workbook-bespoke point figures are documented diffs, not bugs.
+- Custodian (Fidelity) reconciliation: holdings-by-type sum ties to
+  ending balance and to the workbook's stated total to the penny; the
+  workbook's own account-value section was "pending statement" at
+  oracle time, so `beginning`/`flows` are optional and roll-forward is
+  conditional/fail-loud only when present.
+
+### Investment Summary crosswalk finding (PR #16)
+
+The canonical Investment Summary workbook ("Data" sheet, 329
+positions) is curated at **policy-class grain already** (its "Asset
+Allocation Class" column is the 6 Wake Robin classes directly), unlike
+finer Phase-15 sources that need the asset_class→policy crosswalk. All
+329 real positions map through `policy_class_from_label()` with 0
+unmapped.
+
+**Remaining human/operator gate — entity attribution.** The workbook
+is SFO-wide across ~25 entities. Which rows belong to which entity is
+a classification decision already encoded in the workbook's own
+`Invested Entities` / `EntityGrouping` columns — the model reads that
+column as ground truth per `--entity LABEL`, it does not infer entity
+membership. A **household-level roll-up across J&D's constituent
+entities** (as opposed to single-entity studies like Jim's Trust
+alone) is not yet built and would need an explicit decision about
+which entities compose the household aggregate — that is an operator
+decision, not a code gap.
+
+### Tests
+
+453 tests passing at the point Phase 24's core landed (PR #6); the
+full PR sequence (#6, #11–#17) added lens, renderer, CLI, crosswalk,
+and curated-fixture tests incrementally. Full suite green at each
+merge; ruff clean; byte-stable (no existing non-entity file's output
+changed).
+
+### Privacy posture
+
+Identical to Phase 14/23: the source workbook and every derived
+fixture/manifest/rendered-study containing real values are gitignored
+under `data/external/*_local*` and `configs/*_local.yaml`; committed
+code and design docs are generic/methodology-only with no client
+names, dollar values, or fund names.
