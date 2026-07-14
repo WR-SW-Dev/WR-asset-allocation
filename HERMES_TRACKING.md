@@ -2,32 +2,33 @@
 
 > Stable entry point for Hermes/OpenWebUI dashboards. Update sections marked
 > `<!-- auto -->` from CI/cron; update prose sections by hand at phase boundaries.
-> Last manual sync: 2026-05-24.
+> Last manual sync: 2026-07-12 (MODE A auto sync).
 
 ---
 
 ## Current State <!-- auto -->
 
-- Current phase: **Monte Carlo MC-0 through MC-3 implemented** (liquidity stress architecture — simulation core + liquidity stress + reporting); Phase 23 design lock (PE real-data commitment input layer) still pending at `f81ff43`
-- Latest commit: `3c0e8ee` — docs(tracking): MODE A sync 2026-05-25 — 411 tests, MC-0/MC-3 complete
+- Current phase: **Phase 24 — entity dimension implemented** (Jim's Trust pilot: deterministic fixture + study lenses + xlsx/markdown renderers + one-command CLI, design-locked at `ac7cfb4`); Monte Carlo hardening (closed-form reserves, cross-process-stable seeds) and Morningstar Direct ingestion (index returns + empirical CMA calibration) also landed. Phase 23 (PE real-data commitment input layer) design lock at `f81ff43` still pending implementation.
+- Latest commit: `697d4b5` — docs(entity): update example paths to entity_jims_trust naming
 - Branch: `main` (0 ahead, 0 behind origin)
-- Last pushed: 2026-05-25 11:46:39 -0400 (`3c0e8ee`)
-- Local HEAD: `32b2ab3` — docs(tracking): MODE A sync 2026-06-17 — fix self-ref (3c0e8ee), stale gov flag escalation (43d) (1 ahead, 0 behind origin)
-- Working tree: clean (HERMES_TRACKING.md only — this file)
-- Tests: **411 passed** (unchanged vs last committed sync `3c0e8ee`) (`.venv/bin/pytest -p no:warnings --ignore=tests/test_transaction_cost_summary.py`; 4 cvxportfolio-gated omitted)
-- Ruff: **14 errors** (13 fixable with `--fix`) — Monte Carlo lint debt: 6 F401 unused imports, 2 UP017 datetime.UTC, 3 I001 unsorted imports, 1 B905 zip-strict, 1 F841 unused var, +1 I001 carryover from `test_review_fixes_2026_05_05.py`. Recurring lint-debt-after-phase pattern confirmed.
-- Latest run set: `data/processed/runs/aa-dc07a16dffa9-96451d89bace-20260625T122219Z-8191-crisis_correlation`
+- Last pushed: 2026-07-09 17:01:21 -0400 (`697d4b5`)
+- Local HEAD: none — matches origin/main
+- Working tree: clean except 1 untracked non-repo file (`WR Asset Allocation Model Documentation.pdf`) — not staged, not authored this session
+- Tests: **550 passed** (unchanged vs prior committed sync `0b0f2c5`'s 550) (`.venv/bin/pytest -p no:warnings --ignore=tests/test_transaction_cost_summary.py`; 4 cvxportfolio-gated omitted)
+- Ruff: **0 errors** — `ruff check src tests scripts` all clean.
+- Latest run set: `data/processed/runs/aa-dc07a16dffa9-96451d89bace-20260712T223056Z-d931-crisis_correlation`
 
-No new behavior commits since last sync at `3c0e8ee`. Only `32b2ab3` (prior tracker sync, unpushed) has landed locally.
+**PHASE DRIFT: 1 commit since last sync** (`0b0f2c5`..HEAD): `697d4b5 docs(entity): update example paths to entity_jims_trust naming`.
 
-⚠️ **Stale governance flag**: Flag from `021a408` (2026-05-05) has been unresolved for 51 days. Recommend either (a) `docs(model):` follow-up commit to document the behavior changes in `src/aa_model/` (manifest, loaders, coverage, pe/call_obligation, pe/call_reconciliation, pe/ta_model), or (b) formally accept as known debt with an `# Unresolved` annotation in MODEL_DOCUMENTATION.md. Carrying an unresolved flag indefinitely reduces the tracker's signal-to-noise ratio — future flags may be ignored.
+Governance check (this range `0b0f2c5..HEAD`): **PASS — not a behavior change**. `697d4b5` touches `scripts/run_entity_study.py` and `src/aa_model/entity/cli.py`, but the diff is docstring-only (usage-example fixture path renamed `entity_jd_local.yaml` → `entity_jims_trust_full_local.yaml` to match the confirmed Jim's Trust entity_id). No executable logic changed; MODEL_DOCUMENTATION.md governance rule does not apply — this is not a `fix()`/`feat()` behavior commit, verified by reading the full diff (4 lines changed, all inside triple-quoted docstrings).
 
-Governance check (this range `3c0e8ee..HEAD`): PASS — only `32b2ab3` (docs(tracking)) touched; no behavior paths.
+⚠️ **Stale governance flag**: Flag from `021a408` (2026-05-05) has been unresolved for **68 days**. Recommend either (a) `docs(model):` follow-up commit to document the behavior changes in `src/aa_model/` (manifest, loaders, coverage, pe/call_obligation, pe/call_reconciliation, pe/ta_model), or (b) formally accept as known debt with an `# Unresolved` annotation in MODEL_DOCUMENTATION.md. This flag has now carried across 4+ tracker syncs without resolution — signal-to-noise is degrading; recommend operator disposition at next sync if still unresolved.
 
 ## Open Gates
 
-- [ ] **Phase 23 implementation** — design locked at `f81ff43` (PE real-data commitment input layer). Implementation pending.
-- [ ] **Monte Carlo MC-0 through MC-3** — DESIGN LOCKED + IMPLEMENTED at `d2c3144`/`478d902`/`971379f`/`9b34373`. MC lint debt sweep (`chore(lint):`) still pending.
+- [ ] **Phase 23 implementation** — design locked at `f81ff43` (PE real-data commitment input layer). Implementation pending (unchanged this sync).
+- [x] **Monte Carlo MC-0 through MC-3** — DESIGN LOCKED + IMPLEMENTED at `d2c3144`/`478d902`/`971379f`/`9b34373`. MC lint debt sweep landed at `5c83156` — ruff clean as of this sync.
+- [ ] **Phase 24 entity dimension follow-ups** — design locked `ac7cfb4`, implemented across PRs #6/#11–#17 (`0b0f2c5`). Doc-as-spec entry present (MODEL_DOCUMENTATION.md §Phase 24). No open test gaps identified this sync; re-verify at next full sweep.
 - [ ] **Phase 7 STAIRS PE adapter** — design locked at `993a751`. Implementation
       blocked until tests + invariants drafted alongside `pe/stairs_adapter.py`.
 - [ ] **Phase 10 L14 transaction-cost diagnostics** — partially resolved at
@@ -123,17 +124,17 @@ Cron jobs are registered separately in Hermes (see `cronjob list`).
 
 ### Asset Allocation Model — Status
 ```
-Current phase:        Monte Carlo MC-0 through MC-3 implemented (liquidity stress); Phase 23 design lock pending
-Last pushed commit:   3c0e8ee  (docs(tracking): MODE A sync 2026-05-25)
-Local HEAD:           32b2ab3  (docs(tracking): MODE A sync 2026-06-17 — 1 ahead, 0 behind)
-Tests:                411 passed (unchanged vs last committed sync 3c0e8ee; --ignore=tests/test_transaction_cost_summary.py; 4 cvxportfolio-gated omitted)
-Ruff errors:          14 (13 fixable; Monte Carlo lint debt + 1 I001 carryover)
+Current phase:        Phase 24 entity dimension implemented (Jim's Trust pilot); Monte Carlo hardened + Morningstar ingestion landed; Phase 23 design lock pending
+Last pushed commit:   697d4b5  (docs(entity): update example paths to entity_jims_trust naming)
+Local HEAD:           none — matches origin/main
+Tests:                550 passed (unchanged vs prior sync 0b0f2c5's 550; --ignore=tests/test_transaction_cost_summary.py; 4 cvxportfolio-gated omitted)
+Ruff errors:          0 (clean)
 Open limitations:     11  (L1-L3, L5, L7, L9-L12, L14 partial, L17, L19 partial)
 Resolved limitations: 8   (L4, L6, L8, L13, L15, L16, L18, L20)
 Next gated task:      Phase 23 implementation (PE real-data commitment input layer)
-Last model-doc update: 2026-05-15 (MC-0 through MC-3 recorded at 7ba967d)
-Latest run:           20260625T122219Z (aa-dc07a16dffa9-96451d89bace-20260625T122219Z-8191-crisis_correlation)
-Stale gov flag:       51 days unresolved (021a408, 2026-05-05) — escalate or accept
+Last model-doc update: 2026-07-09 (0b0f2c5 — MC hardening, Morningstar, Phase 24 entity study)
+Latest run:           20260712T223056Z (aa-dc07a16dffa9-96451d89bace-20260712T223056Z-d931-crisis_correlation)
+Stale gov flag:       68 days unresolved (021a408, 2026-05-05) — escalate or accept
 ```
 
 ### Governance Gates
