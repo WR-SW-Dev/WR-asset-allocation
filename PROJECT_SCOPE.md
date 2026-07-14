@@ -269,7 +269,7 @@ tracking.
 | --- | --- | --- |
 | `docs/wake_robin_liquidity_architecture.png` / `.svg` | yes | Reference architecture; structural, no live data |
 | `PROJECT_SCOPE.md` (this file) | yes | Authoritative scope, structural only |
-| `MODEL_DOCUMENTATION.md` | yes | Authoritative model documentation |
+| `docs/MODEL_DOCUMENTATION.md` | yes | Authoritative model documentation |
 | `Cashflow Modeling v7.xlsx` | **no** | Live family cash-flow data |
 | `Investment Summary for Categorization March 2026.xlsx` | **no** | Live positions, dollar balances, manager identities |
 | Person-identifying details beyond entity *type* | **no** | Out of scope for repo-tracked artifacts |

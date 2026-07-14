@@ -19,7 +19,7 @@ consumer / diagnostic layer), 14.3 (workbook row_range / data-region scoping).
 - Adapter contracts in §9 of SPEC are mandated; stubs are reference implementations.
 - Determinism: every run writes `data/processed/runs/<run_id>/manifest.json`. Reruns with identical inputs produce byte-identical `ledger.parquet`.
 - Phase gates are real. Each phase ships a `docs(model): lock Phase N` design commit BEFORE any implementation commit.
-- MODEL_DOCUMENTATION.md is doc-as-spec — every behavior change updates it in the same series.
+- docs/MODEL_DOCUMENTATION.md is doc-as-spec — every behavior change updates it in the same series.
 - CMA baseline is immutable; scenarios are perturbations.
 
 ## Standing design constraint: cash-flow worksheet alignment
@@ -117,7 +117,7 @@ pre-built search index, so a couple of codegraph calls beat a grep/read sweep.
 - Don't introduce a base class for a single subclass beyond what §9 of SPEC mandates.
 - Don't overwrite an existing run directory; reruns create a new `run_id`.
 - Don't bypass the design-lock-before-implementation rule.
-- Don't ship a behavior change without a matching MODEL_DOCUMENTATION.md edit.
+- Don't ship a behavior change without a matching docs/MODEL_DOCUMENTATION.md edit.
 - Don't push red main. WIP commits stay local.
 - Don't build a parallel cash-flow forecast that silently conflicts with the
   workbook (see standing design constraint above).
