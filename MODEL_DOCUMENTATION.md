@@ -12286,3 +12286,71 @@ fixture/manifest/rendered-study containing real values are gitignored
 under `data/external/*_local*` and `configs/*_local.yaml`; committed
 code and design docs are generic/methodology-only with no client
 names, dollar values, or fund names.
+
+---
+
+## Governance follow-up — external-review triage fixes of 2026-05-05
+
+Three `fix()` commits shipped 2026-05-05 from an external-review triage
+without the same-series doc edit required by the doc-as-spec rule. The
+tracker raised a governance flag at sync `5977b19` (2026-05-05) and
+carried it for 68 days across 4+ syncs. This entry documents the
+behavior changes and resolves the flag (option (a): `docs(model):`
+follow-up). All three commits carried tests in-series (including the
+195-line `tests/test_review_fixes_2026_05_05.py`); behavior has been in
+production since 2026-05-05 — this entry records contracts, it does not
+change them.
+
+### `0280024` — fix(manifest): invocation_id path-traversal guard
+
+`integration/manifest.make_run_id` interpolates `invocation_id` into the
+run directory name (`out_dir = base_dir / run_id`). An explicit
+`invocation_id` is now validated against `^[A-Za-z0-9_-]{1,80}$`
+(path-component-safe) and raises `ValueError` on failure. **Contract
+change:** previously any string was accepted, so `/`, `\`, or `..`
+could make the run dir escape its parent. Auto-generated ids
+(timestamp+nonce) and the sweep's `<stem>-<scenario_name>` suffixing
+already conform; no caller-visible change on the happy path.
+
+### `d2d9e09` — fix(config): config-hash expansion, overlay path resolution, schema tightening
+
+- **`io/loaders.hash_study_config`** now folds the optional
+  Phase 13–21 fields into `config_hash` when set (`distribution_producer`,
+  `workbook_ingestion`, `position_ingestion`, `liquidity_obligations`,
+  `liquidity_coverage_config`, `reconciliation_gates`). **Hash impact:**
+  two overlays that differ only in ingestion/gate config no longer
+  collide on the same `config_hash`; runs using those overlays hash
+  differently after this commit. Configs with all optional fields
+  `None` hash exactly as before (additive-only).
+- **`io/loaders.load_local_study_config`** normalizes
+  `workbook_ingestion.workbook_path` and
+  `position_ingestion.workbook_path` relative to repo root, mirroring
+  the pre-existing `manifest_path` handling — relative paths in local
+  overlays now resolve the same regardless of CWD.
+- **`pe/reconciliation_gates.ReconciliationGatesConfig`** adds
+  `extra="forbid"`: typoed gate keys fail loud instead of being
+  silently ignored.
+- **`liquidity/coverage.LiquidityCoverageConfig`** adds field bounds
+  (`ge`/`le` where applicable) and a model validator enforcing
+  `liquid_coverage_warning_threshold >= liquid_coverage_breach_threshold`.
+- **`liquidity/coverage`** wires `runway_horizon_quarters`, which was
+  previously accepted in config but never read: a warning advisory is
+  now emitted when `liquidity_runway_quarters` is finite and below the
+  horizon.
+
+### `021a408` — fix(pe): TA wind-down, fund_count cap, reconciliation div-by-zero
+
+- **`pe/ta_model.project_fund`**: the final projected quarter now forces
+  full liquidation (`distribution = nav_after_call`, terminal
+  `nav_end = 0`). Previously the pacing curve left residual NAV at
+  lifetime end; the model contract is that funds terminate. Golden CSV
+  (`tests/golden/ta_single_fund.csv`) regenerated in-series; a test
+  asserts terminal NAV is zero.
+- **`pe/call_obligation.derive_pe_capital_call_obligation`**:
+  `fund_count` is now derived from the full positive-fund set instead of
+  being accidentally capped at 5 by the top-contributors slice.
+  Diagnostics-only change (top-5 list itself unchanged).
+- **`pe/call_reconciliation.reconcile_call_obligation`**:
+  `total_delta_pct` guards the zero/zero case — both workbook and PE
+  totals at zero is a legitimate state (no calls forecast either way)
+  and now yields 0.0 instead of dividing by zero.
