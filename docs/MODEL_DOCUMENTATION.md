@@ -12354,3 +12354,73 @@ already conform; no caller-visible change on the happy path.
   `total_delta_pct` guards the zero/zero case — both workbook and PE
   totals at zero is a legitimate state (no calls forecast either way)
   and now yields 0.0 instead of dividing by zero.
+
+---
+
+## Phase 26 — Purpose (goals-based) allocation lens
+
+Design locked at `docs/phase_26_purpose_allocation_design_lock.md`
+(committed `4364863`); implemented 2026-07-15 in three sub-steps plus a
+local real-workbook oracle run. Adds a second policy dimension to the
+entity study: the same investable base reported against a **purpose**
+policy with tolerance bands, as the firm's study template does in its
+`Purpose_Allocation` tab (first present in the 2026-07-15 template
+revision).
+
+### What shipped
+
+- **Taxonomy** — seven canonical purposes (`liquidity`, `stability`,
+  `income`, `growth`, `aggressive_growth`, `hedge`, `community`), fixed
+  canonical order (`_PURPOSE_ORDER`), committed methodology.
+- **`PurposeTargetBand`** — target weight plus asymmetric
+  `lower_band_pp`/`upper_band_pp` (all fractions of the investable base);
+  derived `min_pct` floors at 0, `max_pct = target + upper`. Bounds are
+  never stored, so `min ≤ target ≤ max` holds by construction.
+- **`EntityPurposePolicyConfig`** — targets must sum to 1 (same tolerance
+  as `EntityPolicyConfig`); band dict key must equal the band's own
+  `purpose` field (fail loud on mismatch); carries the holding→purpose
+  resolution rules: explicit `assignments[holding_key]` first, then
+  `default_by_policy_class[policy_class]`, else error. Purpose lives in
+  policy, **not** the fixture — `EntityFixture` is unchanged and existing
+  fixture content hashes are unaffected; one fixture can be studied under
+  alternative purpose policies.
+- **`purpose_allocation_lens`** — rows for all seven purposes in canonical
+  order (including empty ones): current $/%, target %, band bounds,
+  variance (pp), three-valued status against **inclusive** `[min, max]`
+  (independent of variance sign — an empty purpose whose lower band reaches
+  0 is *in band*), and signed $-to-target. Fail-loud contracts: entity-id
+  mismatch; stale assignment keys (assignment naming a holding absent from
+  the fixture); unresolvable holdings; and Σ purpose buckets ≠ investable
+  base within 1¢ (the purpose partition must cover the identical base as
+  the class partition — partial holdings coverage is an error for this
+  lens, unlike the holdings-detail lens where it is allowed).
+- **Renderers/CLI** — markdown section `## Purpose allocation
+  (goals-based)` immediately after allocation-vs-target; xlsx sheet
+  `Purpose Allocation`; both gated on a purpose policy being supplied.
+  Without one, rendered output is **byte-identical** to pre-Phase-26
+  renders (verified against the real study render before/after). CLI gains
+  `--purpose-policy`; the run manifest records `purpose_policy_version`.
+
+### Validation
+
+- 24 new synthetic tests in `tests/test_phase26_purpose_allocation.py`
+  (config validation incl. sum-to-1/negative-band/key-mismatch/strict
+  extras; resolution incl. override-beats-default, unmapped and stale-key
+  failures; lens statuses incl. both inclusive band edges, empty-purpose
+  floor-0 vs positive-min, the class-split case, base coverage, partial
+  coverage rejection; renderer gating/order/sheet shape; CLI happy path +
+  missing file). Full suite green; ruff clean.
+- **Real-workbook oracle (local, gitignored): ALL 56 CHECKS PASS** — 7
+  purposes × 8 fields (current $, current %, target %, min %, max %,
+  variance, status, $-to-target) reproduce the template's
+  `Purpose_Allocation` tab exactly, including the holding-level split of
+  the cash sleeve across two purposes via explicit assignments — the case
+  that makes a class-only crosswalk insufficient.
+
+### Interpretation caveats
+
+- Reporting only: band status is descriptive; nothing here is a
+  rebalancing mandate or an allocator input.
+- The purpose and class dimensions are both rendered; the model does not
+  force them to agree beyond sharing (and each exactly covering) the same
+  investable base.
