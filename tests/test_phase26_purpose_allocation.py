@@ -362,3 +362,122 @@ def test_lens_partial_holdings_coverage_raises() -> None:
     fx = EntityFixture.model_validate(data)
     with pytest.raises(ValueError, match="do not cover the investable base"):
         purpose_allocation_lens(fx, _purpose_policy())
+
+
+# ---- groups 5–6: renderers + CLI --------------------------------------------
+
+import yaml as _yaml  # noqa: E402
+from aa_model.entity import export_study_xlsx, render_study_markdown  # noqa: E402
+from aa_model.entity.cli import main as cli_main  # noqa: E402
+
+
+def test_render_markdown_gating() -> None:
+    fx = _full_fixture()
+    without = render_study_markdown(fx)
+    assert "Purpose allocation" not in without
+    with_pp = render_study_markdown(fx, purpose_policy=_purpose_policy())
+    assert "## Purpose allocation (goals-based)" in with_pp
+    assert "| liquidity |" in with_pp
+    assert "in_band" in with_pp
+    # section order: purpose section follows the allocation-vs-target position
+    assert with_pp.index("## Purpose allocation") < with_pp.index("## Holdings detail")
+
+
+def test_render_markdown_without_purpose_is_unchanged_by_feature() -> None:
+    # the no-purpose render must not differ in any way when the argument is
+    # omitted vs explicitly None (the byte-identical legacy contract)
+    fx = _full_fixture()
+    assert render_study_markdown(fx) == render_study_markdown(fx, purpose_policy=None)
+
+
+def test_export_xlsx_purpose_sheet(tmp_path: Path) -> None:
+    import openpyxl
+
+    fx = _full_fixture()
+    out = tmp_path / "study.xlsx"
+    export_study_xlsx(fx, out, purpose_policy=_purpose_policy())
+    wb = openpyxl.load_workbook(out)
+    assert "Purpose Allocation" in wb.sheetnames
+    ws = wb["Purpose Allocation"]
+    header = [c.value for c in ws[1]]
+    assert header[0] == "Purpose" and header[-1] == "Status"
+    purposes = [row[0].value for row in ws.iter_rows(min_row=2)]
+    assert purposes == [
+        "liquidity",
+        "stability",
+        "income",
+        "growth",
+        "aggressive_growth",
+        "hedge",
+        "community",
+    ]
+    # and gated off without the policy
+    out2 = tmp_path / "study2.xlsx"
+    export_study_xlsx(fx, out2)
+    assert "Purpose Allocation" not in openpyxl.load_workbook(out2).sheetnames
+
+
+def test_render_entity_mismatch_raises() -> None:
+    fx = _full_fixture()
+    with pytest.raises(ValueError, match="does not match"):
+        render_study_markdown(fx, purpose_policy=_purpose_policy(entity_id="entity_other"))
+
+
+def _write_purpose_fixture_and_policy(tmp_path: Path) -> tuple[Path, Path]:
+    fx_path = tmp_path / "fixture.yaml"
+    fx_path.write_text(_yaml.safe_dump(_full_fixture().model_dump(mode="json")), encoding="utf-8")
+    pp_cfg = _config()
+    pp_cfg["assignments"] = {"short_dur_etf": "stability"}
+    pp_cfg["bands"] = {
+        k: _band(k, t, lo, hi)
+        for k, (t, lo, hi) in {
+            "liquidity": ("0.05", "0.03", "0.10"),
+            "stability": ("0.10", "0.05", "0.05"),
+            "income": ("0.34", "0.10", "0.10"),
+            "growth": ("0.40", "0.10", "0.10"),
+            "aggressive_growth": ("0.05", "0.05", "0.05"),
+            "hedge": ("0.05", "0.05", "0.00"),
+            "community": ("0.01", "0.01", "0.03"),
+        }.items()
+    }
+    pp_path = tmp_path / "purpose_policy.yaml"
+    pp_path.write_text(_yaml.safe_dump(pp_cfg), encoding="utf-8")
+    return fx_path, pp_path
+
+
+def test_cli_purpose_policy_happy_path(tmp_path: Path) -> None:
+    import json
+
+    fx_path, pp_path = _write_purpose_fixture_and_policy(tmp_path)
+    out = tmp_path / "out"
+    rc = cli_main(
+        [
+            "--fixture",
+            str(fx_path),
+            "--purpose-policy",
+            str(pp_path),
+            "--out",
+            str(out),
+        ]
+    )
+    assert rc == 0
+    md = (out / "study.md").read_text(encoding="utf-8")
+    assert "## Purpose allocation (goals-based)" in md
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert manifest["purpose_policy_version"] == "synth_purpose_v1"
+    assert manifest["policy_version"] is None
+
+
+def test_cli_purpose_policy_missing_file(tmp_path: Path) -> None:
+    fx_path, _ = _write_purpose_fixture_and_policy(tmp_path)
+    with pytest.raises(FileNotFoundError):
+        cli_main(
+            [
+                "--fixture",
+                str(fx_path),
+                "--purpose-policy",
+                str(tmp_path / "nope.yaml"),
+                "--out",
+                str(tmp_path / "out2"),
+            ]
+        )

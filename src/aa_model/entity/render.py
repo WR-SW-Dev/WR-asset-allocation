@@ -28,8 +28,9 @@ from aa_model.entity.lenses import (
     holdings_detail_lens,
     liquidity_lens,
     liquidity_projection_lens,
+    purpose_allocation_lens,
 )
-from aa_model.entity.schemas import EntityFixture, EntityPolicyConfig
+from aa_model.entity.schemas import EntityFixture, EntityPolicyConfig, EntityPurposePolicyConfig
 
 _DASH = "—"
 
@@ -54,7 +55,10 @@ def _yrs(v: Decimal | None) -> str:
 
 
 def render_study_markdown(
-    fixture: EntityFixture, *, policy: EntityPolicyConfig | None = None
+    fixture: EntityFixture,
+    *,
+    policy: EntityPolicyConfig | None = None,
+    purpose_policy: EntityPurposePolicyConfig | None = None,
 ) -> str:
     """Render the study as markdown. Sections present only when the fixture
     carries the underlying data; allocation-vs-target requires `policy`."""
@@ -93,6 +97,23 @@ def render_study_markdown(
             L.append(
                 f"| {r.policy_class} | {_usd(r.current_usd)} | {_pct(r.current_pct)} | "
                 f"{_pct(r.target_pct)} | {r.gap_pp:,.1f} | {_usd(r.to_target_usd)} | {r.action} |"
+            )
+
+    # Purpose allocation (goals-based)
+    if purpose_policy is not None:
+        pa = purpose_allocation_lens(fixture, purpose_policy)
+        L.append("\n## Purpose allocation (goals-based)")
+        L.append(
+            "| Purpose | Current | Current % | Target % | Band | Variance (pp) "
+            "| $ to target | Status |"
+        )
+        L.append("|---|---:|---:|---:|---:|---:|---:|---|")
+        for r in pa.rows:
+            band = f"{_pct(r.min_pct)}–{_pct(r.max_pct)}"
+            L.append(
+                f"| {r.purpose} | {_usd(r.current_usd)} | {_pct(r.current_pct)} | "
+                f"{_pct(r.target_pct)} | {band} | {r.variance_pp:,.1f} | "
+                f"{_usd(r.to_target_usd)} | {r.status} |"
             )
 
     # Holdings detail
@@ -212,7 +233,11 @@ def render_study_markdown(
 
 
 def export_study_xlsx(
-    fixture: EntityFixture, path: str | Path, *, policy: EntityPolicyConfig | None = None
+    fixture: EntityFixture,
+    path: str | Path,
+    *,
+    policy: EntityPolicyConfig | None = None,
+    purpose_policy: EntityPurposePolicyConfig | None = None,
 ) -> Path:
     """Write the study to a fresh .xlsx (one sheet per section). Never opens
     or mutates any source workbook. Returns the written path."""
@@ -265,6 +290,37 @@ def export_study_xlsx(
                     r.action,
                 ]
                 for r in a.rows
+            ],
+        )
+
+    if purpose_policy is not None:
+        pa = purpose_allocation_lens(fixture, purpose_policy)
+        _sheet(
+            "Purpose Allocation",
+            [
+                "Purpose",
+                "Current",
+                "Current %",
+                "Target %",
+                "Min %",
+                "Max %",
+                "Variance (pp)",
+                "$ to target",
+                "Status",
+            ],
+            [
+                [
+                    r.purpose,
+                    _f(r.current_usd),
+                    _f(r.current_pct),
+                    _f(r.target_pct),
+                    _f(r.min_pct),
+                    _f(r.max_pct),
+                    _f(r.variance_pp),
+                    _f(r.to_target_usd),
+                    r.status,
+                ]
+                for r in pa.rows
             ],
         )
 
