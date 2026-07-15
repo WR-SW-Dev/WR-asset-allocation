@@ -22,7 +22,11 @@ from typing import Any
 
 import yaml
 
-from aa_model.entity.schemas import EntityFixture, EntityPolicyConfig
+from aa_model.entity.schemas import (
+    EntityFixture,
+    EntityPolicyConfig,
+    EntityPurposePolicyConfig,
+)
 
 _ZERO = Decimal("0")
 
@@ -121,6 +125,25 @@ def load_entity_policy(path: str | Path) -> EntityPolicyConfig:
     if not isinstance(data, dict):
         raise ValueError(f"policy root must be a mapping; got {type(data)!r}")
     return EntityPolicyConfig.model_validate(data)
+
+
+def load_entity_purpose_policy(path: str | Path) -> EntityPurposePolicyConfig:
+    """Load and validate an entity's purpose (goals-based) policy — targets,
+    bands, and holding→purpose resolution rules — from YAML or JSON. Author
+    weights/bands as strings for exact `Decimal`."""
+    p = Path(path)
+    text = p.read_text(encoding="utf-8")
+    if p.suffix.lower() in (".yaml", ".yml"):
+        data = yaml.safe_load(text)
+    elif p.suffix.lower() == ".json":
+        data = json.loads(text)
+    else:
+        raise ValueError(
+            f"unsupported purpose-policy extension: {p.suffix!r} (use .yaml/.yml/.json)"
+        )
+    if not isinstance(data, dict):
+        raise ValueError(f"purpose policy root must be a mapping; got {type(data)!r}")
+    return EntityPurposePolicyConfig.model_validate(data)
 
 
 # ---- reducers --------------------------------------------------------------

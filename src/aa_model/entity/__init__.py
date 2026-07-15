@@ -26,6 +26,7 @@ from aa_model.entity.fixture import (
     content_hash,
     load_entity_fixture,
     load_entity_policy,
+    load_entity_purpose_policy,
     pe_exposure_totals,
     segment_totals,
 )
@@ -57,8 +58,10 @@ from aa_model.entity.schemas import (
     CustodianReconciliation,
     EntityFixture,
     EntityPolicyConfig,
+    EntityPurposePolicyConfig,
     HoldingRecord,
     PECommitmentExposureRecord,
+    PurposeTargetBand,
     QuarterProjectionRecord,
 )
 
@@ -76,6 +79,8 @@ __all__ = [
     "CustodianReconciliation",
     "EntityFixture",
     "EntityPolicyConfig",
+    "EntityPurposePolicyConfig",
+    "PurposeTargetBand",
     "HoldingRecord",
     "HoldingsClassGroup",
     "HoldingsDetail",
@@ -107,6 +112,7 @@ __all__ = [
     "liquidity_projection_lens",
     "load_entity_fixture",
     "load_entity_policy",
+    "load_entity_purpose_policy",
     "pe_exposure_totals",
     "segment_totals",
 ]

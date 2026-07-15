@@ -595,3 +595,121 @@ class EntityPolicyConfig(BaseModel):
                 f"policy targets must sum to 1.0 within {_TARGET_SUM_TOLERANCE}; got {total}"
             )
         return self
+
+
+# ---- Phase 26 — purpose (goals-based) allocation ---------------------------
+
+# The seven canonical purposes of the goals-based policy dimension. Committed
+# methodology, not client data. Fixed order below is the canonical
+# display/iteration order (mirrors _POLICY_CLASS_ORDER's role).
+_PURPOSE_LITERAL = Literal[
+    "liquidity",
+    "stability",
+    "income",
+    "growth",
+    "aggressive_growth",
+    "hedge",
+    "community",
+]
+
+_PURPOSE_ORDER: tuple[str, ...] = (
+    "liquidity",
+    "stability",
+    "income",
+    "growth",
+    "aggressive_growth",
+    "hedge",
+    "community",
+)
+
+
+class PurposeTargetBand(BaseModel):
+    """One purpose's target weight plus its asymmetric tolerance band.
+
+    `target`, `lower_band_pp`, and `upper_band_pp` are all fractions of the
+    investable base (``Decimal("0.05")`` = 5 percentage points). The band is
+    asymmetric: it extends from ``target - lower_band_pp`` (floored at 0) to
+    ``target + upper_band_pp``. Bounds are derived, never stored, so
+    ``min_pct <= target <= max_pct`` holds by construction.
+    """
+
+    model_config = _STRICT
+
+    purpose: _PURPOSE_LITERAL
+    target: Decimal
+    lower_band_pp: Decimal = Decimal("0")
+    upper_band_pp: Decimal = Decimal("0")
+
+    @field_validator("target", "lower_band_pp", "upper_band_pp")
+    @classmethod
+    def _finite_non_negative(cls, v: Decimal) -> Decimal:
+        if not v.is_finite() or v < 0:
+            raise ValueError(f"purpose band values must be finite and >= 0; got {v}")
+        return v
+
+    @property
+    def min_pct(self) -> Decimal:
+        return max(Decimal("0"), self.target - self.lower_band_pp)
+
+    @property
+    def max_pct(self) -> Decimal:
+        return self.target + self.upper_band_pp
+
+
+class EntityPurposePolicyConfig(BaseModel):
+    """An entity's purpose (goals-based) policy: targets + bands + the rules
+    that resolve each holding to a purpose.
+
+    Purpose is policy, not an observed fact of a holding, so it lives here —
+    the fixture schema carries no purpose field and existing fixture content
+    hashes are unaffected. Resolution order per holding (fail loud):
+
+    1. explicit ``assignments[holding_key]``,
+    2. ``default_by_policy_class[holding.policy_class]``,
+    3. neither → error at lens time.
+
+    ``assignments`` keys are not validated here (the config is
+    fixture-independent); a stale key fails loud when the lens runs. Purposes
+    omitted from ``bands`` have an implied 0% target with zero bands.
+    """
+
+    model_config = _STRICT
+
+    purpose_policy_version: str
+    entity_id: str
+    bands: dict[_PURPOSE_LITERAL, PurposeTargetBand]
+    assignments: dict[str, _PURPOSE_LITERAL] = Field(default_factory=dict)
+    default_by_policy_class: dict[_POLICY_CLASS_LITERAL, _PURPOSE_LITERAL] = Field(
+        default_factory=dict
+    )
+
+    @field_validator("purpose_policy_version")
+    @classmethod
+    def _version_url_safe(cls, v: str) -> str:
+        if not _URL_SAFE_RE.match(v):
+            raise ValueError(f"purpose_policy_version must be URL-safe; got {v!r}")
+        return v
+
+    @field_validator("entity_id")
+    @classmethod
+    def _entity_id_no_colons(cls, v: str) -> str:
+        if ":" in v:
+            raise ValueError(f"entity_id must not contain colons; got {v!r}")
+        return v
+
+    @model_validator(mode="after")
+    def _bands_well_formed(self) -> EntityPurposePolicyConfig:
+        if not self.bands:
+            raise ValueError("bands must be non-empty")
+        for key, band in self.bands.items():
+            if band.purpose != key:
+                raise ValueError(
+                    f"bands[{key!r}].purpose is {band.purpose!r} — the band's "
+                    f"purpose field must match its dict key"
+                )
+        total = sum((b.target for b in self.bands.values()), Decimal("0"))
+        if abs(total - Decimal("1")) > _TARGET_SUM_TOLERANCE:
+            raise ValueError(
+                f"purpose targets must sum to 1.0 within {_TARGET_SUM_TOLERANCE}; got {total}"
+            )
+        return self
