@@ -41,6 +41,8 @@ from aa_model.entity.lenses import (
     HoldingsDetail,
     LiquidityLens,
     LiquidityProjectionLens,
+    PurposeAllocation,
+    PurposeAllocationRow,
     allocation_vs_target_lens,
     balance_sheet_lens,
     burn_rate_lens,
@@ -49,6 +51,8 @@ from aa_model.entity.lenses import (
     holdings_detail_lens,
     liquidity_lens,
     liquidity_projection_lens,
+    purpose_allocation_lens,
+    resolve_holding_purpose,
 )
 from aa_model.entity.render import export_study_xlsx, render_study_markdown
 from aa_model.entity.schemas import (
@@ -90,6 +94,8 @@ __all__ = [
     "PEExposureTotals",
     "QuarterProjectionRecord",
     "SegmentTotals",
+    "PurposeAllocation",
+    "PurposeAllocationRow",
     "allocation_vs_target_lens",
     "balance_sheet_lens",
     "burn_rate_lens",
@@ -109,6 +115,8 @@ __all__ = [
     "policy_class_for",
     "policy_class_from_label",
     "liquidity_lens",
+    "purpose_allocation_lens",
+    "resolve_holding_purpose",
     "liquidity_projection_lens",
     "load_entity_fixture",
     "load_entity_policy",
