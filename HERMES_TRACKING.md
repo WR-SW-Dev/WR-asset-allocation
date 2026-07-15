@@ -14,7 +14,7 @@
 - Last pushed: 2026-07-15 16:27:59 -0400 (`d1277dc`)
 - Local HEAD: none — matches origin/main
 - Working tree: clean (HERMES_TRACKING.md only — this file). The formerly-untracked PDF is now tracked at `docs/WR Asset Allocation Model Documentation.pdf` (`3afd16b`, moved `f1b68fc`, regenerated `19b4def`)
-- Tests: **550 passed** (unchanged vs prior committed sync `0b0f2c5`'s 550) (`.venv/bin/pytest -p no:warnings --ignore=tests/test_transaction_cost_summary.py`; 4 cvxportfolio-gated omitted)
+- Tests: **574 passed** (550 → 574: +24 Phase 26 synthetic tests) (`.venv/bin/pytest -p no:warnings --ignore=tests/test_transaction_cost_summary.py`; 4 cvxportfolio-gated omitted)
 - Ruff: **0 errors** — `ruff check src tests scripts` all clean (verified at each Phase 26 sub-step + pre-push hook).
 - Latest run set: `data/processed/runs/aa-dc07a16dffa9-96451d89bace-20260712T223056Z-d931-crisis_correlation`
 
