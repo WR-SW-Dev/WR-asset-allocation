@@ -2,25 +2,25 @@
 
 > Stable entry point for Hermes/OpenWebUI dashboards. Update sections marked
 > `<!-- auto -->` from CI/cron; update prose sections by hand at phase boundaries.
-> Last manual sync: 2026-07-15 (MODE A manual sync).
+> Last manual sync: 2026-07-15 (MODE A manual sync #2 — post-Phase-26 merge).
 
 ---
 
 ## Current State <!-- auto -->
 
-- Current phase: **Phase 24 — entity dimension implemented** (Jim's Trust pilot: deterministic fixture + study lenses + xlsx/markdown renderers + one-command CLI, design-locked at `ac7cfb4`); Monte Carlo hardening (closed-form reserves, cross-process-stable seeds) and Morningstar Direct ingestion (index returns + empirical CMA calibration) also landed. Phase 23 (PE real-data commitment input layer) design lock at `f81ff43` still pending implementation.
-- Latest commit: `19b4def` — docs: regenerate model documentation PDF export (as of 2026-07-14)
+- Current phase: **Phase 26 — purpose (goals-based) allocation lens SHIPPED** (PR #18 `d1277dc`: 7-purpose taxonomy, banded purpose policy, holding→purpose resolution, lens + md/xlsx sections + CLI `--purpose-policy`; oracle 56/56 vs the study template's new Purpose_Allocation tab; no-purpose output byte-identical). Prior: **Phase 24 — entity dimension implemented** (Jim's Trust pilot: deterministic fixture + study lenses + xlsx/markdown renderers + one-command CLI, design-locked at `ac7cfb4`); Monte Carlo hardening (closed-form reserves, cross-process-stable seeds) and Morningstar Direct ingestion (index returns + empirical CMA calibration) also landed. Phase 23 (PE real-data commitment input layer) design lock at `f81ff43` still pending implementation.
+- Latest commit: `d1277dc` — Phase 26 — purpose (goals-based) allocation lens (#18)
 - Branch: `main` (0 ahead, 0 behind origin)
-- Last pushed: 2026-07-14 19:19:15 -0400 (`19b4def`)
+- Last pushed: 2026-07-15 16:27:59 -0400 (`d1277dc`)
 - Local HEAD: none — matches origin/main
 - Working tree: clean (HERMES_TRACKING.md only — this file). The formerly-untracked PDF is now tracked at `docs/WR Asset Allocation Model Documentation.pdf` (`3afd16b`, moved `f1b68fc`, regenerated `19b4def`)
 - Tests: **550 passed** (unchanged vs prior committed sync `0b0f2c5`'s 550) (`.venv/bin/pytest -p no:warnings --ignore=tests/test_transaction_cost_summary.py`; 4 cvxportfolio-gated omitted)
-- Ruff: **0 errors** — `ruff check src tests scripts` all clean.
+- Ruff: **0 errors** — `ruff check src tests scripts` all clean (verified at each Phase 26 sub-step + pre-push hook).
 - Latest run set: `data/processed/runs/aa-dc07a16dffa9-96451d89bace-20260712T223056Z-d931-crisis_correlation`
 
-**PHASE DRIFT: 5 commits since last sync** (`469ef69`..HEAD), all `docs:`/`docs(model):` — `3afd16b` track model-doc PDF export · `f1b68fc` move PDF to docs/ · `fc04aeb` docs(model) governance follow-up for the 2026-05-05 fixes · `c8e1e55` move MODEL_DOCUMENTATION.md to docs/ (README/CLAUDE.md/PROJECT_SCOPE path refs updated) · `19b4def` regenerate PDF export (15pp, current state, golden-data PE figure).
+**PHASE DRIFT: 2 commits since last sync** (`94d843d`..HEAD): `4364863` docs(design) Phase 26 design lock · `d1277dc` Phase 26 implementation (PR #18 squash of 4 sub-step commits: schemas, lens, renderers+CLI, SPEC amendment + doc-as-spec entry).
 
-Governance check (this range `469ef69..HEAD`): **PASS — no behavior changes**. No commit in the range touches executable code under `src/` or `scripts/`; the range is documentation only (one binary PDF, one file move with path-reference edits, one doc-as-spec entry). **Doc-as-spec location changed: `MODEL_DOCUMENTATION.md` → `docs/MODEL_DOCUMENTATION.md`** (`c8e1e55`) — governance tooling that greps the root path must use the new path.
+Governance check (this range `94d843d..HEAD`): **PASS — behavior change fully governed**. `d1277dc` is a `feat` behavior change, and its squash INCLUDES the required same-series governance artifacts: SPEC §11 amendment (Spec Amendment 2026-07-15) and the MODEL_DOCUMENTATION.md §Phase 26 doc-as-spec entry. Design was locked before implementation (`4364863`); implementation ran on explicit operator go; no-purpose rendering verified byte-identical; local real-workbook oracle 56/56.
 
 ✅ **Governance flag RESOLVED (2026-07-14, `fc04aeb`)**: The 2026-05-05 flag (`021a408`, carried 68 days) was closed via disposition (a) — a `docs(model):` follow-up documenting all three external-review triage commits (`0280024` manifest invocation_id path-safety guard; `d2d9e09` config-hash expansion, overlay workbook_path resolution, gate/coverage schema tightening; `021a408` TA terminal wind-down, fund_count uncap, zero/zero delta guard) in `docs/MODEL_DOCUMENTATION.md` §Governance follow-up. No open governance flags remain.
 
@@ -28,6 +28,7 @@ Governance check (this range `469ef69..HEAD`): **PASS — no behavior changes**.
 
 - [ ] **Phase 23 implementation** — design locked at `f81ff43` (PE real-data commitment input layer). Implementation pending (unchanged this sync).
 - [x] **Monte Carlo MC-0 through MC-3** — DESIGN LOCKED + IMPLEMENTED at `d2c3144`/`478d902`/`971379f`/`9b34373`. MC lint debt sweep landed at `5c83156` — ruff clean as of this sync.
+- [x] **Phase 26 purpose (goals-based) allocation lens** — design locked `4364863`, implemented + merged PR #18 (`d1277dc`) same day; oracle 56/56; real purpose policy gitignored at `data/external/entity_jims_trust_purpose_policy_local.yaml`.
 - [ ] **Phase 24 entity dimension follow-ups** — design locked `ac7cfb4`, implemented across PRs #6/#11–#17 (`0b0f2c5`). Doc-as-spec entry present (MODEL_DOCUMENTATION.md §Phase 24). No open test gaps identified this sync; re-verify at next full sweep.
 - [ ] **Phase 7 STAIRS PE adapter** — design locked at `993a751`. Implementation
       blocked until tests + invariants drafted alongside `pe/stairs_adapter.py`.
@@ -124,15 +125,15 @@ Cron jobs are registered separately in Hermes (see `cronjob list`).
 
 ### Asset Allocation Model — Status
 ```
-Current phase:        Phase 24 entity dimension implemented (Jim's Trust pilot); Monte Carlo hardened + Morningstar ingestion landed; Phase 23 design lock pending
-Last pushed commit:   19b4def  (docs: regenerate model documentation PDF export)
+Current phase:        Phase 26 purpose-allocation lens shipped (PR #18); Phase 24 entity dimension live; Phase 23 design lock pending; Phase 25 reserved (PE projection anchoring)
+Last pushed commit:   d1277dc  (Phase 26 — purpose allocation lens, PR #18)
 Local HEAD:           none — matches origin/main
-Tests:                550 passed (unchanged vs prior sync 0b0f2c5's 550; docs-only range since; --ignore=tests/test_transaction_cost_summary.py; 4 cvxportfolio-gated omitted)
+Tests:                574 passed (+24 Phase 26; --ignore=tests/test_transaction_cost_summary.py; 4 cvxportfolio-gated omitted)
 Ruff errors:          0 (clean; verified by pre-push hook on every push in range)
 Open limitations:     11  (L1-L3, L5, L7, L9-L12, L14 partial, L17, L19 partial)
 Resolved limitations: 8   (L4, L6, L8, L13, L15, L16, L18, L20)
 Next gated task:      Phase 23 implementation (PE real-data commitment input layer)
-Last model-doc update: 2026-07-14 (fc04aeb — governance follow-up for 2026-05-05 fixes; doc now at docs/MODEL_DOCUMENTATION.md per c8e1e55)
+Last model-doc update: 2026-07-15 (d1277dc — §Phase 26 entry + SPEC Amendment 2026-07-15, same-series with the behavior change)
 Latest run:           20260712T223056Z (aa-dc07a16dffa9-96451d89bace-20260712T223056Z-d931-crisis_correlation)
 Stale gov flag:       RESOLVED 2026-07-14 (fc04aeb, disposition (a)) — no open flags
 ```
