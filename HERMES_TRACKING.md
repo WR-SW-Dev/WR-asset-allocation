@@ -2,27 +2,27 @@
 
 > Stable entry point for Hermes/OpenWebUI dashboards. Update sections marked
 > `<!-- auto -->` from CI/cron; update prose sections by hand at phase boundaries.
-> Last manual sync: 2026-07-12 (MODE A auto sync).
+> Last manual sync: 2026-07-15 (MODE A manual sync).
 
 ---
 
 ## Current State <!-- auto -->
 
 - Current phase: **Phase 24 — entity dimension implemented** (Jim's Trust pilot: deterministic fixture + study lenses + xlsx/markdown renderers + one-command CLI, design-locked at `ac7cfb4`); Monte Carlo hardening (closed-form reserves, cross-process-stable seeds) and Morningstar Direct ingestion (index returns + empirical CMA calibration) also landed. Phase 23 (PE real-data commitment input layer) design lock at `f81ff43` still pending implementation.
-- Latest commit: `697d4b5` — docs(entity): update example paths to entity_jims_trust naming
+- Latest commit: `19b4def` — docs: regenerate model documentation PDF export (as of 2026-07-14)
 - Branch: `main` (0 ahead, 0 behind origin)
-- Last pushed: 2026-07-09 17:01:21 -0400 (`697d4b5`)
+- Last pushed: 2026-07-14 19:19:15 -0400 (`19b4def`)
 - Local HEAD: none — matches origin/main
-- Working tree: clean except 1 untracked non-repo file (`WR Asset Allocation Model Documentation.pdf`) — not staged, not authored this session
+- Working tree: clean (HERMES_TRACKING.md only — this file). The formerly-untracked PDF is now tracked at `docs/WR Asset Allocation Model Documentation.pdf` (`3afd16b`, moved `f1b68fc`, regenerated `19b4def`)
 - Tests: **550 passed** (unchanged vs prior committed sync `0b0f2c5`'s 550) (`.venv/bin/pytest -p no:warnings --ignore=tests/test_transaction_cost_summary.py`; 4 cvxportfolio-gated omitted)
 - Ruff: **0 errors** — `ruff check src tests scripts` all clean.
 - Latest run set: `data/processed/runs/aa-dc07a16dffa9-96451d89bace-20260712T223056Z-d931-crisis_correlation`
 
-**PHASE DRIFT: 1 commit since last sync** (`0b0f2c5`..HEAD): `697d4b5 docs(entity): update example paths to entity_jims_trust naming`.
+**PHASE DRIFT: 5 commits since last sync** (`469ef69`..HEAD), all `docs:`/`docs(model):` — `3afd16b` track model-doc PDF export · `f1b68fc` move PDF to docs/ · `fc04aeb` docs(model) governance follow-up for the 2026-05-05 fixes · `c8e1e55` move MODEL_DOCUMENTATION.md to docs/ (README/CLAUDE.md/PROJECT_SCOPE path refs updated) · `19b4def` regenerate PDF export (15pp, current state, golden-data PE figure).
 
-Governance check (this range `0b0f2c5..HEAD`): **PASS — not a behavior change**. `697d4b5` touches `scripts/run_entity_study.py` and `src/aa_model/entity/cli.py`, but the diff is docstring-only (usage-example fixture path renamed `entity_jd_local.yaml` → `entity_jims_trust_full_local.yaml` to match the confirmed Jim's Trust entity_id). No executable logic changed; MODEL_DOCUMENTATION.md governance rule does not apply — this is not a `fix()`/`feat()` behavior commit, verified by reading the full diff (4 lines changed, all inside triple-quoted docstrings).
+Governance check (this range `469ef69..HEAD`): **PASS — no behavior changes**. No commit in the range touches executable code under `src/` or `scripts/`; the range is documentation only (one binary PDF, one file move with path-reference edits, one doc-as-spec entry). **Doc-as-spec location changed: `MODEL_DOCUMENTATION.md` → `docs/MODEL_DOCUMENTATION.md`** (`c8e1e55`) — governance tooling that greps the root path must use the new path.
 
-⚠️ **Stale governance flag**: Flag from `021a408` (2026-05-05) has been unresolved for **68 days**. Recommend either (a) `docs(model):` follow-up commit to document the behavior changes in `src/aa_model/` (manifest, loaders, coverage, pe/call_obligation, pe/call_reconciliation, pe/ta_model), or (b) formally accept as known debt with an `# Unresolved` annotation in MODEL_DOCUMENTATION.md. This flag has now carried across 4+ tracker syncs without resolution — signal-to-noise is degrading; recommend operator disposition at next sync if still unresolved.
+✅ **Governance flag RESOLVED (2026-07-14, `fc04aeb`)**: The 2026-05-05 flag (`021a408`, carried 68 days) was closed via disposition (a) — a `docs(model):` follow-up documenting all three external-review triage commits (`0280024` manifest invocation_id path-safety guard; `d2d9e09` config-hash expansion, overlay workbook_path resolution, gate/coverage schema tightening; `021a408` TA terminal wind-down, fund_count uncap, zero/zero delta guard) in `docs/MODEL_DOCUMENTATION.md` §Governance follow-up. No open governance flags remain.
 
 ## Open Gates
 
@@ -125,16 +125,16 @@ Cron jobs are registered separately in Hermes (see `cronjob list`).
 ### Asset Allocation Model — Status
 ```
 Current phase:        Phase 24 entity dimension implemented (Jim's Trust pilot); Monte Carlo hardened + Morningstar ingestion landed; Phase 23 design lock pending
-Last pushed commit:   697d4b5  (docs(entity): update example paths to entity_jims_trust naming)
+Last pushed commit:   19b4def  (docs: regenerate model documentation PDF export)
 Local HEAD:           none — matches origin/main
-Tests:                550 passed (unchanged vs prior sync 0b0f2c5's 550; --ignore=tests/test_transaction_cost_summary.py; 4 cvxportfolio-gated omitted)
-Ruff errors:          0 (clean)
+Tests:                550 passed (unchanged vs prior sync 0b0f2c5's 550; docs-only range since; --ignore=tests/test_transaction_cost_summary.py; 4 cvxportfolio-gated omitted)
+Ruff errors:          0 (clean; verified by pre-push hook on every push in range)
 Open limitations:     11  (L1-L3, L5, L7, L9-L12, L14 partial, L17, L19 partial)
 Resolved limitations: 8   (L4, L6, L8, L13, L15, L16, L18, L20)
 Next gated task:      Phase 23 implementation (PE real-data commitment input layer)
-Last model-doc update: 2026-07-09 (0b0f2c5 — MC hardening, Morningstar, Phase 24 entity study)
+Last model-doc update: 2026-07-14 (fc04aeb — governance follow-up for 2026-05-05 fixes; doc now at docs/MODEL_DOCUMENTATION.md per c8e1e55)
 Latest run:           20260712T223056Z (aa-dc07a16dffa9-96451d89bace-20260712T223056Z-d931-crisis_correlation)
-Stale gov flag:       68 days unresolved (021a408, 2026-05-05) — escalate or accept
+Stale gov flag:       RESOLVED 2026-07-14 (fc04aeb, disposition (a)) — no open flags
 ```
 
 ### Governance Gates
