@@ -391,3 +391,43 @@ live gitignored under `data/external/`; committed fixtures are synthetic.
 **Gating unchanged.** Design-lock-before-implementation and phase gates
 (§6) still apply; the entity study composes existing Phase 12–23 layers and
 does not alter any default-fixture run (byte-stable).
+
+---
+
+## Spec Amendment 2026-07-15 — Purpose (goals-based) allocation lens (Phase 26)
+
+Amends §1 scope and §5 data contracts to add a second policy dimension to
+the entity study: **purpose (goals-based) allocation** with tolerance
+bands. Full design in `docs/phase_26_purpose_allocation_design_lock.md`.
+This amendment authorizes the deviation; it does **not** weaken any §2
+principle.
+
+**Scope added.** The entity study can report the investable base against a
+purpose policy: seven canonical purposes (liquidity, stability, income,
+growth, aggressive_growth, hedge, community), each with a target weight and
+an asymmetric tolerance band. Reporting only — no rebalancing mandates, no
+allocator/optimizer coupling.
+
+**New data contracts** (`src/aa_model/entity/schemas.py`):
+
+- `PurposeTargetBand` — target + `lower_band_pp`/`upper_band_pp` (fractions
+  of the investable base); derived bounds `min_pct = max(0, target − lower)`,
+  `max_pct = target + upper`.
+- `EntityPurposePolicyConfig` — targets sum to 1; holding→purpose
+  resolution rules: explicit `assignments[holding_key]` overrides
+  `default_by_policy_class[policy_class]`; anything unresolved fails loud.
+  Purpose is policy, **not** a fixture attribute: `EntityFixture` is
+  unchanged and existing fixture content hashes are unaffected.
+- `purpose_allocation_lens` — per-purpose current/target/band/variance/
+  status (three-valued, inclusive bounds) and $-to-target; enforces
+  Σ purpose buckets == investable base (fail loud on partial holdings
+  coverage).
+
+**Renderers/CLI.** Markdown section + xlsx sheet gated on a purpose policy
+being supplied; absent one, output is byte-identical to pre-Phase-26
+renders. CLI flag `--purpose-policy`; manifest records
+`purpose_policy_version`.
+
+Determinism (§8) and phase gates (§6) upheld; committed artifacts remain
+generic/methodology-only (real targets, bands, and assignments live in
+gitignored local config).

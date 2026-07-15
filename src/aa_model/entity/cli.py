@@ -26,6 +26,7 @@ from aa_model.entity import (
     fixture_from_curated_positions,
     load_entity_fixture,
     load_entity_policy,
+    load_entity_purpose_policy,
     read_investment_summary_positions,
     render_study_markdown,
 )
@@ -61,6 +62,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="optional strategic-policy YAML/JSON (enables the allocation-vs-target section)",
+    )
+    p.add_argument(
+        "--purpose-policy",
+        type=Path,
+        default=None,
+        dest="purpose_policy",
+        help="optional purpose-policy YAML/JSON (enables the goals-based purpose-allocation section)",
     )
     p.add_argument(
         "--out",
@@ -107,9 +115,17 @@ def main(argv: list[str] | None = None) -> int:
     else:
         fixture = load_entity_fixture(args.fixture)
     policy = load_entity_policy(args.policy) if args.policy else None
+    purpose_policy = (
+        load_entity_purpose_policy(args.purpose_policy) if args.purpose_policy else None
+    )
     if policy is not None and policy.entity_id != fixture.entity_id:
         raise SystemExit(
             f"policy.entity_id ({policy.entity_id!r}) does not match "
+            f"fixture.entity_id ({fixture.entity_id!r})"
+        )
+    if purpose_policy is not None and purpose_policy.entity_id != fixture.entity_id:
+        raise SystemExit(
+            f"purpose_policy.entity_id ({purpose_policy.entity_id!r}) does not match "
             f"fixture.entity_id ({fixture.entity_id!r})"
         )
     digest = content_hash(fixture)
@@ -121,6 +137,10 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"policy:       {policy.policy_version if policy else '(none — allocation section omitted)'}"
     )
+    print(
+        f"purpose:      "
+        f"{purpose_policy.purpose_policy_version if purpose_policy else '(none — purpose section omitted)'}"
+    )
     print(f"content_hash: {digest}")
     print(f"output_dir:   {out}")
     if args.dry_run:
@@ -131,11 +151,12 @@ def main(argv: list[str] | None = None) -> int:
     written: list[str] = []
     if "md" in formats:
         (out / "study.md").write_text(
-            render_study_markdown(fixture, policy=policy), encoding="utf-8"
+            render_study_markdown(fixture, policy=policy, purpose_policy=purpose_policy),
+            encoding="utf-8",
         )
         written.append("study.md")
     if "xlsx" in formats:
-        export_study_xlsx(fixture, out / "study.xlsx", policy=policy)
+        export_study_xlsx(fixture, out / "study.xlsx", policy=policy, purpose_policy=purpose_policy)
         written.append("study.xlsx")
 
     manifest = {
@@ -143,6 +164,9 @@ def main(argv: list[str] | None = None) -> int:
         "as_of_date": fixture.as_of_date.isoformat(),
         "fixture_version": fixture.fixture_version,
         "policy_version": policy.policy_version if policy else None,
+        "purpose_policy_version": (
+            purpose_policy.purpose_policy_version if purpose_policy else None
+        ),
         "content_hash": digest,
         "formats": formats,
         "files": written,

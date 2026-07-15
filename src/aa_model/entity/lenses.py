@@ -28,8 +28,10 @@ from typing import Literal
 from aa_model.entity.fixture import segment_totals
 from aa_model.entity.schemas import (
     _POLICY_CLASS_ORDER,
+    _PURPOSE_ORDER,
     EntityFixture,
     EntityPolicyConfig,
+    EntityPurposePolicyConfig,
     HoldingRecord,
 )
 
@@ -454,3 +456,120 @@ def custodian_reconciliation_lens(
             )
         )
     return results
+
+
+# ---- purpose allocation (Phase 26) -----------------------------------------
+
+
+@dataclass(frozen=True)
+class PurposeAllocationRow:
+    purpose: str
+    current_usd: Decimal
+    current_pct: Decimal  # fraction of investable base
+    target_pct: Decimal  # fraction of investable base
+    min_pct: Decimal  # band lower bound (fraction), floored at 0
+    max_pct: Decimal  # band upper bound (fraction)
+    variance_pp: Decimal  # (current − target) in percentage points
+    status: Literal["below_band", "in_band", "above_band"]
+    to_target_usd: Decimal  # + = add to reach target; − = trim
+
+
+@dataclass(frozen=True)
+class PurposeAllocation:
+    investable_base_usd: Decimal
+    rows: list[PurposeAllocationRow] = field(default_factory=list)
+
+
+def resolve_holding_purpose(
+    holding: HoldingRecord, purpose_policy: EntityPurposePolicyConfig
+) -> str:
+    """Resolve one holding to its purpose: explicit assignment first, then the
+    policy-class default, else fail loud (no silent 'other' bucket)."""
+    assigned = purpose_policy.assignments.get(holding.holding_key)
+    if assigned is not None:
+        return assigned
+    default = purpose_policy.default_by_policy_class.get(holding.policy_class)
+    if default is not None:
+        return default
+    raise ValueError(
+        f"holding {holding.holding_key!r} (policy_class={holding.policy_class!r}) "
+        f"resolves to no purpose: not in assignments and no "
+        f"default_by_policy_class entry for its class"
+    )
+
+
+def purpose_allocation_lens(
+    fixture: EntityFixture,
+    purpose_policy: EntityPurposePolicyConfig,
+    *,
+    recon_tolerance: Decimal = Decimal("0.01"),
+) -> PurposeAllocation:
+    """Goals-based allocation on the investable base.
+
+    Every holding resolves to exactly one purpose (assignment → class default
+    → error). Rows cover all seven purposes in canonical order, including
+    empty ones. Status is three-valued against the band's inclusive
+    ``[min_pct, max_pct]`` bounds and is independent of the variance sign — a
+    purpose whose lower band reaches 0 is *in band* while empty.
+
+    Structural invariant (fail loud): Σ purpose buckets equals the investable
+    base within ``recon_tolerance`` — the purpose partition must cover the
+    identical base as the class partition.
+    """
+    if purpose_policy.entity_id != fixture.entity_id:
+        raise ValueError(
+            f"purpose_policy.entity_id ({purpose_policy.entity_id!r}) does not "
+            f"match fixture.entity_id ({fixture.entity_id!r})"
+        )
+    holding_keys = {h.holding_key for h in fixture.holdings}
+    stale = sorted(set(purpose_policy.assignments) - holding_keys)
+    if stale:
+        raise ValueError(
+            f"purpose_policy.assignments name holdings absent from the fixture "
+            f"(stale keys are errors, not no-ops): {stale}"
+        )
+
+    current_by_purpose: dict[str, Decimal] = {}
+    for h in fixture.holdings:
+        purpose = resolve_holding_purpose(h, purpose_policy)
+        current_by_purpose[purpose] = current_by_purpose.get(purpose, _ZERO) + h.market_value_usd
+
+    base = segment_totals(fixture).investable_usd
+    covered = sum(current_by_purpose.values(), _ZERO)
+    if abs(covered - base) > recon_tolerance:
+        raise ValueError(
+            f"purpose buckets do not cover the investable base: Σ holdings by "
+            f"purpose = {covered} vs investable base = {base} "
+            f"(tolerance {recon_tolerance}) — holdings must fully reconcile to "
+            f"investable segments before the purpose lens is meaningful"
+        )
+
+    rows: list[PurposeAllocationRow] = []
+    for purpose in _PURPOSE_ORDER:
+        band = purpose_policy.bands.get(purpose)
+        target_pct = band.target if band is not None else _ZERO
+        min_pct = band.min_pct if band is not None else _ZERO
+        max_pct = band.max_pct if band is not None else _ZERO
+        current_usd = current_by_purpose.get(purpose, _ZERO)
+        current_pct = _pct(current_usd, base)
+        variance_pp = (current_pct - target_pct) * _HUNDRED
+        if current_pct < min_pct:
+            status: Literal["below_band", "in_band", "above_band"] = "below_band"
+        elif current_pct > max_pct:
+            status = "above_band"
+        else:
+            status = "in_band"
+        rows.append(
+            PurposeAllocationRow(
+                purpose=purpose,
+                current_usd=current_usd,
+                current_pct=current_pct,
+                target_pct=target_pct,
+                min_pct=min_pct,
+                max_pct=max_pct,
+                variance_pp=variance_pp,
+                status=status,
+                to_target_usd=(target_pct - current_pct) * base,
+            )
+        )
+    return PurposeAllocation(investable_base_usd=base, rows=rows)
