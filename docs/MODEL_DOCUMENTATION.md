@@ -12119,6 +12119,74 @@ depends on the other; neither is wired into the orchestrator.
 
 ---
 
+## JPM LTCMA — capital market assumption source (2026-07-17, `be4c2d7`)
+
+A third, **review-gated** CMA source alongside the hand-set
+`configs/cma.yaml` and the empirical benchmark-calibration adapter:
+J.P. Morgan's **Long-Term Capital Market Assumptions** (2026 edition,
+30th annual; USD; data as of 2025-09-30). Like benchmark-calibration,
+it is **non-behavioral** — nothing here is imported by the orchestrator
+or allocators, and `configs/cma.yaml`, `allocation.stub_weights`, and
+`io/validation` are untouched. It produces a *candidate* for review, not
+a live config.
+
+### What shipped
+
+- **`assumptions/jpm_ltcma.py`** — `load_jpm_source()` parses a captured
+  JPM matrix into a `JpmLtcma` dataclass; `build_cma_dict()` maps it to a
+  `CMAConfig`-shaped dict. Supports **aliases** (a derived bucket that
+  borrows another's return/vol/correlations and is perfectly correlated
+  with it — used for `re_opco_stabilized` → `real_estate`, which has no
+  JPM analog and is $0 in the current book) and a **liquidity** overlay
+  (JPM does not publish liquidity; defaults set in the build script).
+- **`scripts/build_cma_from_jpm.py`** — emits `configs/cma_jpm.yaml`
+  candidate; **arithmetic** returns are the active `expected_returns_annual`
+  (mathematically correct mean-variance input), with **compound**
+  (geometric) returns retained as an annotated companion in the file
+  header (the "store both" choice). Self-validates the candidate against
+  the real `CMAConfig` schema.
+- **`tests/test_jpm_ltcma.py`** — 12 tests, **synthetic data only**
+  (parse, order/shape validation, arithmetic-vs-compound basis, alias
+  borrow + perfect-correlation, liquidity coverage, schema validity,
+  correlation symmetry/unit-diagonal, compound companion).
+
+### Bucket crosswalk (JPM class → allocation bucket)
+
+`equity`←U.S. Large Cap · `fixed_income`←U.S. Aggregate Bonds ·
+`real_estate`←U.S. Core Real Estate · `pe_buyout`←Private Equity ·
+`absolute_return`←Diversified Hedge Funds · `cash_and_cash_alts`←U.S. Cash ·
+`re_opco_stabilized`← (alias of `real_estate`).
+
+### Provenance & verification
+
+- Values parsed programmatically from the published USD assumption matrix
+  (`ltcma-2026-us-matrix_usd.pdf`, p.2). The matrix carries two compound
+  columns (2026 current + 2025 prior edition); the **2026** column was
+  confirmed and the arithmetic column identified via both JPM's press
+  release and the `arithmetic − compound ≈ vol²/2` identity holding across
+  every bucket. Externally verified figures: U.S. Large Cap 6.7%, U.S.
+  Core Real Estate 8.2%, Private Equity 10.2% (compound, 2026) — all match
+  the JPM press release; USD 60/40 headline = 6.4%.
+
+### Scope boundary (distribution posture)
+
+JPM material is institutional/qualified-investor only ("not for retail
+distribution"), so **all JPM-derived numbers stay out of git** — the raw
+capture `data/external/jpm_ltcma_2026.yaml` and the generated
+`configs/cma_jpm.yaml` are both gitignored. Only the machinery (adapter,
+script, synthetic-data tests) is committed; the candidate regenerates via
+`python scripts/build_cma_from_jpm.py --write`.
+
+### Promotion path (not yet taken)
+
+Promoting `cma_jpm.yaml` into the live `configs/cma.yaml` requires the
+separate, **governed** allocation-taxonomy expansion (`stub_weights` and
+the fixture from the current 4 public buckets to this 7-bucket set), which
+reshapes the stub allocator's output — a behavior change requiring a SPEC
+amendment and same-series doc-as-spec entry.
+
+---
+
 ## Phase 24 design — entity dimension (J&D pilot; Jim's Trust one-command capability)
 
 **Goal.** Give the model a first-class **entity** dimension and
