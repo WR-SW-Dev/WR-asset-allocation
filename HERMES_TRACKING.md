@@ -2,16 +2,16 @@
 
 > Stable entry point for Hermes/OpenWebUI dashboards. Update sections marked
 > `<!-- auto -->` from CI/cron; update prose sections by hand at phase boundaries.
-> Last manual sync: 2026-07-15 (MODE A manual sync #2 — post-Phase-26 merge).
+> Last manual sync: 2026-07-17 (commit-pointer sync — post-Phase-26 housekeeping).
 
 ---
 
 ## Current State <!-- auto -->
 
 - Current phase: **Phase 26 — purpose (goals-based) allocation lens SHIPPED** (PR #18 `d1277dc`: 7-purpose taxonomy, banded purpose policy, holding→purpose resolution, lens + md/xlsx sections + CLI `--purpose-policy`; oracle 56/56 vs the study template's new Purpose_Allocation tab; no-purpose output byte-identical). Prior: **Phase 24 — entity dimension implemented** (Jim's Trust pilot: deterministic fixture + study lenses + xlsx/markdown renderers + one-command CLI, design-locked at `ac7cfb4`); Monte Carlo hardening (closed-form reserves, cross-process-stable seeds) and Morningstar Direct ingestion (index returns + empirical CMA calibration) also landed. Phase 23 (PE real-data commitment input layer) design lock at `f81ff43` still pending implementation.
-- Latest commit: `d1277dc` — Phase 26 — purpose (goals-based) allocation lens (#18)
+- Latest commit: `f22ca9f` — fix(ingestion): silence Pydantic model_ namespace warnings (non-behavioral). Prior housekeeping: `0f47dd1` docs(tracking) test-count fix. Last behavior change: `d1277dc` (Phase 26 purpose lens, PR #18).
 - Branch: `main` (0 ahead, 0 behind origin)
-- Last pushed: 2026-07-15 16:27:59 -0400 (`d1277dc`)
+- Last pushed: 2026-07-17 (`f22ca9f`)
 - Local HEAD: none — matches origin/main
 - Working tree: clean (HERMES_TRACKING.md only — this file). The formerly-untracked PDF is now tracked at `docs/WR Asset Allocation Model Documentation.pdf` (`3afd16b`, moved `f1b68fc`, regenerated `19b4def`)
 - Tests: **574 passed** (550 → 574: +24 Phase 26 synthetic tests) (`.venv/bin/pytest -p no:warnings --ignore=tests/test_transaction_cost_summary.py`; 4 cvxportfolio-gated omitted)
@@ -126,7 +126,7 @@ Cron jobs are registered separately in Hermes (see `cronjob list`).
 ### Asset Allocation Model — Status
 ```
 Current phase:        Phase 26 purpose-allocation lens shipped (PR #18); Phase 24 entity dimension live; Phase 23 design lock pending; Phase 25 reserved (PE projection anchoring)
-Last pushed commit:   d1277dc  (Phase 26 — purpose allocation lens, PR #18)
+Last pushed commit:   f22ca9f  (fix: silence Pydantic model_ warnings; non-behavioral. Last behavior change: d1277dc Phase 26 PR #18)
 Local HEAD:           none — matches origin/main
 Tests:                574 passed (+24 Phase 26; --ignore=tests/test_transaction_cost_summary.py; 4 cvxportfolio-gated omitted)
 Ruff errors:          0 (clean; verified by pre-push hook on every push in range)
