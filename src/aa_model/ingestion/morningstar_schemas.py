@@ -20,7 +20,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-_STRICT = ConfigDict(extra="forbid")
+# protected_namespaces=() silences Pydantic's model_ collision warning for the
+# domain fields model_role / model_usage, which are unrelated to Pydantic internals.
+_STRICT = ConfigDict(extra="forbid", protected_namespaces=())
 
 # ---- vocabularies ----------------------------------------------------------
 
