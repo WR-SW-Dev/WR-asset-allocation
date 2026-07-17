@@ -12424,3 +12424,25 @@ revision).
 - The purpose and class dimensions are both rendered; the model does not
   force them to agree beyond sharing (and each exactly covering) the same
   investable base.
+
+---
+
+## Housekeeping — non-behavioral fixes since Phase 26
+
+Recorded for traceability; none change a model contract, output, or the
+574-test / ruff-clean baseline.
+
+### `f22ca9f` — fix(ingestion): silence Pydantic model_ namespace warnings
+
+`ingestion/morningstar_schemas._STRICT` (the shared `ConfigDict` used by
+the Morningstar index-universe and asset-class-map schemas) now sets
+`protected_namespaces=()` alongside `extra="forbid"`. The domain fields
+`model_role` (`IndexUniverseEntry`) and `model_usage`
+(`AssetClassIndexMapEntry`) collide with Pydantic's reserved `model_`
+namespace and emitted a `UserWarning` on every import/test run. The fields
+are unrelated to Pydantic internals, so the namespace guard is disabled
+rather than renaming them (which would ripple through the YAML configs and
+all consumers). **No contract change:** field names, validation
+(`extra="forbid"` still enforced), and serialized output are unchanged; the
+only observable difference is the absence of the two warnings. Verified by
+running the full suite under `-W error::UserWarning` (green).
