@@ -19,7 +19,11 @@ def make_allocator(config: PublicAllocationConfig, *, engine: str) -> Allocation
         # Lazy import: keeps riskfolio-lib optional unless explicitly enabled.
         from aa_model.allocation.riskfolio_adapter import RiskfolioAdapter
 
-        return RiskfolioAdapter(config)
+        # Map the config objective onto riskfolio-lib's objective string.
+        objective = {"min_risk": "MinRisk", "sharpe": "Sharpe"}[config.objective]
+        return RiskfolioAdapter(
+            config, objective=objective, risk_free_bucket=config.risk_free_bucket
+        )
     if engine == "cvxportfolio":
         # Lazy import: keeps cvxpy / cvxportfolio optional. Phase 4b.
         from aa_model.allocation.cvxportfolio_adapter import CvxportfolioAllocator

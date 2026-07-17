@@ -161,3 +161,36 @@ def test_compound_companion_series(source_path):
     )
     assert comp["equity"] == 0.067
     assert comp["re_opco_stabilized"] == 0.081  # borrowed from real_estate
+
+
+def test_renames_apply_to_output_keys(source_path):
+    cma = build_cma_dict(load_jpm_source(source_path), renames={"fixed_income": "cash"})
+    assert "cash" in cma["expected_returns_annual"]
+    assert "fixed_income" not in cma["expected_returns_annual"]
+    # value and correlations follow the rename
+    assert cma["expected_returns_annual"]["cash"] == 0.049
+    assert cma["correlations"]["equity"]["cash"] == 0.30
+    assert cma["correlations"]["cash"]["cash"] == 1.0
+
+
+def test_drop_removes_source_bucket(source_path):
+    cma = build_cma_dict(load_jpm_source(source_path), drop=["real_estate"])
+    assert set(cma["expected_returns_annual"]) == {"equity", "fixed_income"}
+    assert "real_estate" not in cma["correlations"]["equity"]
+
+
+def test_drop_rejects_unknown_bucket(source_path):
+    with pytest.raises(ValueError, match="drop names not in source buckets"):
+        build_cma_dict(load_jpm_source(source_path), drop=["nonexistent"])
+
+
+def test_liquidity_keyed_by_output_names(source_path):
+    # liquidity must be keyed by the renamed (output) bucket name
+    cma = build_cma_dict(
+        load_jpm_source(source_path),
+        renames={"fixed_income": "cash"},
+        liquidity={"equity": "liquid", "cash": "liquid", "real_estate": "illiquid"},
+    )
+    assert cma["liquidity"]["cash"] == "liquid"
+    cfg = CMAConfig.model_validate(cma)
+    assert set(cfg.liquidity) == {"equity", "cash", "real_estate"}

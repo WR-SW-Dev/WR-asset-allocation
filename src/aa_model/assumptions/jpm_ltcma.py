@@ -108,6 +108,8 @@ def build_cma_dict(
     *,
     return_basis: ReturnBasis = "arithmetic",
     aliases: dict[str, str] | None = None,
+    drop: list[str] | None = None,
+    renames: dict[str, str] | None = None,
     liquidity: dict[str, LiquidityTier] | None = None,
 ) -> dict:
     """Produce a :class:`CMAConfig`-shaped dict from a JPM source.
@@ -115,17 +117,28 @@ def build_cma_dict(
     ``aliases`` maps a derived bucket to an existing source bucket whose
     return/vol/correlations it borrows (e.g.
     ``{"re_opco_stabilized": "real_estate"}``). A derived bucket is perfectly
-    correlated (1.0) with the bucket it proxies. ``liquidity`` (if given) must
-    cover every output bucket, source + derived.
+    correlated (1.0) with the bucket it proxies.
+
+    ``drop`` removes source buckets from the output (e.g. classes with no role
+    in the target profile). ``renames`` maps an internal bucket name to its
+    output name (e.g. ``{"cash_and_cash_alts": "cash"}``), applied last — after
+    aliasing and dropping. ``liquidity`` (if given) is keyed by **output**
+    names and must cover every output bucket.
     """
     aliases = aliases or {}
+    drop = drop or []
+    renames = renames or {}
     for derived, base in aliases.items():
         if base not in source.buckets:
             raise ValueError(f"alias target {base!r} for {derived!r} is not a source bucket")
         if derived in source.buckets:
             raise ValueError(f"alias {derived!r} collides with an existing source bucket")
+    unknown_drop = set(drop) - set(source.buckets)
+    if unknown_drop:
+        raise ValueError(f"drop names not in source buckets: {sorted(unknown_drop)}")
 
-    order = list(source.buckets) + list(aliases)  # derived buckets appended
+    # internal bucket universe: source (minus dropped) + derived aliases
+    internal = [b for b in source.buckets if b not in drop] + list(aliases)
 
     def resolve(b: str) -> str:
         return aliases.get(b, b)
@@ -143,23 +156,42 @@ def build_cma_dict(
         # A derived bucket is a proxy of its base -> identical -> corr 1.0.
         return 1.0 if ra == rb else source.correlation(ra, rb)
 
+    def name(b: str) -> str:  # internal -> output name
+        return renames.get(b, b)
+
     out: dict = {
-        "expected_returns_annual": {b: round(er(b), 4) for b in order},
-        "vol_annual": {b: round(vol(b), 4) for b in order},
-        "correlations": {a: {b: round(corr(a, b), 2) for b in order} for a in order},
+        "expected_returns_annual": {name(b): round(er(b), 4) for b in internal},
+        "vol_annual": {name(b): round(vol(b), 4) for b in internal},
+        "correlations": {
+            name(a): {name(b): round(corr(a, b), 2) for b in internal} for a in internal
+        },
     }
     if liquidity is not None:
-        missing = set(order) - set(liquidity)
+        out_buckets = {name(b) for b in internal}
+        missing = out_buckets - set(liquidity)
         if missing:
             raise ValueError(f"liquidity map missing buckets: {sorted(missing)}")
-        out["liquidity"] = {b: liquidity[b] for b in order}
+        out["liquidity"] = {name(b): liquidity[name(b)] for b in internal}
     return out
 
 
 def compound_returns(
-    source: JpmLtcma, *, aliases: dict[str, str] | None = None
+    source: JpmLtcma,
+    *,
+    aliases: dict[str, str] | None = None,
+    drop: list[str] | None = None,
+    renames: dict[str, str] | None = None,
 ) -> dict[str, float]:
-    """Companion series: compound (geometric) return per output bucket."""
+    """Companion series: compound (geometric) return per output bucket.
+
+    Applies the same ``aliases`` / ``drop`` / ``renames`` transform as
+    :func:`build_cma_dict` so the companion aligns with the active series.
+    """
     aliases = aliases or {}
-    order = list(source.buckets) + list(aliases)
-    return {b: round(source.buckets[aliases.get(b, b)].expected_return_compound, 4) for b in order}
+    drop = drop or []
+    renames = renames or {}
+    internal = [b for b in source.buckets if b not in drop] + list(aliases)
+    return {
+        renames.get(b, b): round(source.buckets[aliases.get(b, b)].expected_return_compound, 4)
+        for b in internal
+    }

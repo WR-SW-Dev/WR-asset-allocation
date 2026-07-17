@@ -7,11 +7,14 @@ It never overwrites ``configs/cma.yaml`` and is not loaded by the model.
 
 The emitted candidate uses JPM **arithmetic** returns as the active
 ``expected_returns_annual`` (correct mean-variance input); JPM **compound**
-returns are retained as an annotated companion in the file header. The derived
-bucket ``re_opco_stabilized`` proxies ``real_estate`` (no JPM analog).
+returns are retained as an annotated companion in the file header. It emits the
+6-bucket profile shape: ``cash_and_cash_alts`` is renamed to ``cash`` (the
+orchestrator hardcodes a ``cash`` bucket) and ``re_opco_stabilized`` is
+excluded ($0, no JPM analog, and a perfect ``real_estate`` duplicate would make
+the optimizer covariance singular).
 
-Promote by hand into ``configs/cma.yaml`` only alongside the matching
-allocation-taxonomy expansion (a separate, governed behavior change).
+This candidate backs the JPM study profile (``configs/base_jpm.yaml``); it is
+not a drop-in for the default ``configs/cma.yaml`` (different taxonomy).
 
 Usage:
     python scripts/build_cma_from_jpm.py
@@ -42,19 +45,24 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_SOURCE = _REPO_ROOT / "data" / "external" / "jpm_ltcma_2026.yaml"
 _DEFAULT_OUT = _REPO_ROOT / "configs" / "cma_jpm.yaml"
 
-# re_opco_stabilized has no JPM analog and is $0 in the current book -> proxy
-# U.S. Core Real Estate (operator decision, 2026-07-17).
-_ALIASES = {"re_opco_stabilized": "real_estate"}
+# Profile shape (operator decisions, 2026-07-17):
+#  - re_opco_stabilized excluded: no JPM analog, $0 in the book, and (as a
+#    perfect real_estate duplicate) it would make the optimizer's covariance
+#    singular. It was only ever an alias, so excluding it = not adding it.
+#  - cash_and_cash_alts renamed to `cash`: the orchestrator hardcodes a `cash`
+#    bucket for inflows / PE calls / spending / costs, so a runnable profile
+#    must name its cash bucket `cash`.
+_ALIASES: dict[str, str] = {}
+_RENAMES = {"cash_and_cash_alts": "cash"}
 
-# JPM does not publish liquidity; sensible review defaults (edit before promotion).
+# JPM does not publish liquidity; sensible defaults keyed by OUTPUT bucket name.
 _LIQUIDITY = {
     "equity": "liquid",
     "fixed_income": "liquid",
     "real_estate": "illiquid",
     "pe_buyout": "illiquid",
     "absolute_return": "semi_liquid",
-    "cash_and_cash_alts": "liquid",
-    "re_opco_stabilized": "illiquid",
+    "cash": "liquid",
 }
 
 
@@ -69,7 +77,8 @@ def _header(source, basis: str, compound: dict[str, float]) -> str:
         f" data as of {source.as_of}",
         f"# Basis:    expected_returns_annual = {basis.upper()} returns"
         " (mean-variance-correct input)",
-        "# Aliases:  re_opco_stabilized proxies real_estate (no JPM analog)",
+        "# Profile:  6 buckets; cash_and_cash_alts->cash (orchestrator hardcodes" " 'cash');",
+        "#           re_opco_stabilized excluded ($0, no JPM analog, singular cov).",
         "# Companion compound (geometric) returns, for planning/reporting:",
     ]
     lines += [f"#   {b:20s} {v * 100:6.2f}%" for b, v in compound.items()]
@@ -91,7 +100,13 @@ def main() -> None:
     args = ap.parse_args()
 
     source = load_jpm_source(args.source)
-    cma = build_cma_dict(source, return_basis=args.basis, aliases=_ALIASES, liquidity=_LIQUIDITY)
+    cma = build_cma_dict(
+        source,
+        return_basis=args.basis,
+        aliases=_ALIASES,
+        renames=_RENAMES,
+        liquidity=_LIQUIDITY,
+    )
 
     # Validate the candidate against the real schema (self-consistency check).
     CMAConfig.model_validate(cma)
@@ -108,7 +123,11 @@ def main() -> None:
 
     if args.write:
         out = Path(args.out)
-        text = _header(source, args.basis, compound_returns(source, aliases=_ALIASES))
+        text = _header(
+            source,
+            args.basis,
+            compound_returns(source, aliases=_ALIASES, renames=_RENAMES),
+        )
         text += yaml.safe_dump(cma, sort_keys=False)
         out.write_text(text, encoding="utf-8")
         print(f"\nWrote candidate (for review, NOT loaded by the model): {out}")

@@ -1,0 +1,25 @@
+name: base_jpm
+description: JPM-profile baseline — 6-bucket entity-class taxonomy, positive drift
+horizon:
+  start_quarter: "2026Q1"
+  num_quarters: 20
+returns:
+  equity:
+    quarterly: 0.018
+  fixed_income:
+    quarterly: 0.008
+  real_estate:
+    quarterly: 0.012
+  absolute_return:
+    quarterly: 0.010
+  cash:
+    quarterly: 0.0075
+nav_initial:
+  equity: 40000000
+  fixed_income: 25000000
+  real_estate: 8000000
+  pe_buyout: 15000000
+  absolute_return: 7000000
+  cash: 5000000
+external_inflows:
+  default_quarterly_usd: 0.0

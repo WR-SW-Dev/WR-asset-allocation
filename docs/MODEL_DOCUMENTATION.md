@@ -12154,8 +12154,14 @@ a live config.
 
 `equity`←U.S. Large Cap · `fixed_income`←U.S. Aggregate Bonds ·
 `real_estate`←U.S. Core Real Estate · `pe_buyout`←Private Equity ·
-`absolute_return`←Diversified Hedge Funds · `cash_and_cash_alts`←U.S. Cash ·
-`re_opco_stabilized`← (alias of `real_estate`).
+`absolute_return`←Diversified Hedge Funds · `cash`←U.S. Cash.
+
+The build script renames `cash_and_cash_alts`→`cash` (the orchestrator
+hardcodes a `cash` bucket for inflows / PE calls / spending / costs, so a
+runnable profile must use that name) and **excludes** `re_opco_stabilized`
+(no JPM analog, $0 in the book, and — as a perfect `real_estate` duplicate —
+it would make the optimizer's covariance matrix singular). Net profile
+universe: **6 buckets**.
 
 ### Provenance & verification
 
@@ -12177,13 +12183,48 @@ capture `data/external/jpm_ltcma_2026.yaml` and the generated
 script, synthetic-data tests) is committed; the candidate regenerates via
 `python scripts/build_cma_from_jpm.py --write`.
 
-### Promotion path (not yet taken)
+### 6-bucket JPM study profile (2026-07-17)
 
-Promoting `cma_jpm.yaml` into the live `configs/cma.yaml` requires the
-separate, **governed** allocation-taxonomy expansion (`stub_weights` and
-the fixture from the current 4 public buckets to this 7-bucket set), which
-reshapes the stub allocator's output — a behavior change requiring a SPEC
-amendment and same-series doc-as-spec entry.
+Rather than mutate the default 4-bucket public model (its bucket names are
+wired through ~19 source files + ~18 test files / ~300 references, and a
+rename would reshape every stub output + golden), the JPM taxonomy ships as
+a **parallel study profile**. The default model and its full test suite are
+untouched.
+
+- **`configs/base_jpm.yaml`** — study profile: `allocation.engine=riskfolio`,
+  `pe.sleeve_target_pct=0.15`; points at `public_allocation_jpm.yaml`,
+  the gitignored `cma_jpm.yaml`, and `data/fixtures/scenarios/base_jpm.yaml`;
+  reuses the bucket-agnostic `spending` / `pe_pacing` / `scenarios` configs.
+  It references the gitignored CMA, so `python scripts/build_cma_from_jpm.py
+  --write` must run first.
+- **`configs/public_allocation_jpm.yaml`** — 6-bucket policy, `objective:
+  sharpe`. `stub_weights` define the universe + PE target only; riskfolio
+  derives the actual weights from the CMA.
+- **`data/fixtures/scenarios/base_jpm.yaml`** — 6-bucket `nav_initial` +
+  returns.
+
+**Config-selectable objective (additive, shared code).**
+`PublicAllocationConfig.objective ∈ {min_risk, sharpe}` (default `min_risk`)
+threads through `allocation/factory.py` to riskfolio's `MinRisk`/`Sharpe`.
+Default preserves the existing model bit-for-bit; the JPM profile sets
+`sharpe` so JPM's **expected returns** (not just vol + correlations) drive
+the optimized weights.
+
+**Risk-free rate from the T-bill bucket.** With rf = 0, the near-zero-vol
+`cash` bucket has a dominating individual Sharpe (≈4.6 vs ≈0.5 for equities)
+and max-Sharpe concentrates in it (~96%). Fixed via
+`PublicAllocationConfig.risk_free_bucket` (additive, default None → rf = 0.0):
+when set, the named bucket's CMA expected return becomes rf in the Sharpe
+solve. The JPM profile sets `risk_free_bucket: cash` (JPM U.S. Cash is the
+1–3mo T-bill proxy), so rf is read from the CMA at runtime — no JPM number is
+hardcoded in a tracked config. Result on the JPM CMA: cash 96% → ~12%, with
+fixed_income / real_estate / pe_buyout driven by their return premia. The
+riskfolio "positive definite" repair on JPM's slightly non-PSD correlation
+matrix is benign.
+
+**Promotion into the default model** (renaming the shipped 4-bucket taxonomy)
+remains a separate, governed behavior change (SPEC amendment + same-series
+doc-as-spec + golden regen) and is intentionally not taken here.
 
 ---
 

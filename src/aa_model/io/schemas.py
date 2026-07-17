@@ -149,6 +149,17 @@ class BaseConfig(BaseModel):
 class PublicAllocationConfig(BaseModel):
     model_config = _STRICT
     stub_weights: dict[str, float]
+    # Riskfolio objective. Additive (Phase 3a extension): default "min_risk"
+    # (minimum variance) preserves the shipped behavior bit-for-bit; "sharpe"
+    # (max Sharpe) makes CMA expected returns drive the optimized weights.
+    # Consumed only by the riskfolio engine; ignored by stub / cvxportfolio.
+    objective: Literal["min_risk", "sharpe"] = "min_risk"
+    # Risk-free asset for the max-Sharpe solve. When set, the named bucket's
+    # CMA expected return is used as the risk-free rate (rf), so a near-zero-vol
+    # cash / T-bill bucket does not dominate on raw Sharpe. Must name an existing
+    # stub_weights bucket. Ignored unless objective == "sharpe"; default None
+    # keeps rf = 0.0 (prior behavior).
+    risk_free_bucket: str | None = None
     # Phase 4b: cost-aware allocation policy-loss weight, **normalized**.
     # The cost-aware allocator computes the effective coefficient as
     # ``λ_eff = policy_loss_lambda_norm / V_total²`` per quarter, so the
@@ -168,6 +179,10 @@ class PublicAllocationConfig(BaseModel):
         total = sum(self.stub_weights.values())
         if abs(total - 1.0) > 1e-9:
             raise ValueError(f"stub_weights must sum to 1.0 within 1e-9; got {total}")
+        if self.risk_free_bucket is not None and self.risk_free_bucket not in self.stub_weights:
+            raise ValueError(
+                f"risk_free_bucket {self.risk_free_bucket!r} is not a stub_weights bucket"
+            )
         return self
 
 

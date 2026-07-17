@@ -1,0 +1,18 @@
+# JPM profile — 6-bucket allocation policy (entity-class taxonomy).
+#
+# engine=riskfolio with objective=sharpe (base_jpm.yaml), so stub_weights
+# values are NOT the output — they define the bucket universe and the PE
+# target (sum of pe_* must equal base.pe.sleeve_target_pct). The optimizer
+# derives the actual weights from the JPM CMA (returns + vol + correlations).
+stub_weights:
+  equity: 0.40
+  fixed_income: 0.25
+  real_estate: 0.08
+  pe_buyout: 0.15
+  absolute_return: 0.07
+  cash: 0.05
+objective: sharpe
+# Use the cash / T-bill bucket's CMA return as the risk-free rate, so cash's
+# near-zero vol doesn't dominate the max-Sharpe solve (JPM U.S. Cash is the
+# 1-3mo T-bill proxy). rf is read from the CMA at runtime, not hardcoded here.
+risk_free_bucket: cash

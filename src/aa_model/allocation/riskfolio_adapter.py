@@ -82,6 +82,7 @@ class _OptimizationInputs:
     cov: pd.DataFrame  # annualized
     lower: pd.Series
     upper: pd.Series
+    rf: float = 0.0  # risk-free rate for the Sharpe objective
 
 
 class RiskfolioAdapter(AllocationAdapter):
@@ -107,15 +108,18 @@ class RiskfolioAdapter(AllocationAdapter):
         *,
         objective: str = "MinRisk",
         risk_measure: str = "MV",
+        risk_free_bucket: str | None = None,
     ) -> None:
         self._buckets: list[str] = sorted(config.stub_weights.keys())
         self._objective = objective
         self._risk_measure = risk_measure
+        self._risk_free_bucket = risk_free_bucket
         self._weights: pd.Series | None = None
         self._diagnostics: dict = {
             "engine": "riskfolio",
             "objective": objective,
             "risk_measure": risk_measure,
+            "risk_free_bucket": risk_free_bucket,
         }
 
     # ---- AllocationAdapter ABC --------------------------------------------
@@ -185,12 +189,22 @@ class RiskfolioAdapter(AllocationAdapter):
             [constraints.max_weights.get(b, 1.0) for b in buckets], index=buckets, dtype=float
         )
 
+        # Risk-free rate for the Sharpe objective: the named bucket's CMA
+        # expected return (e.g. the cash / T-bill bucket). Without it, a
+        # near-zero-vol cash bucket dominates raw Sharpe. rf stays 0.0 when no
+        # bucket is configured, preserving prior behavior.
+        rf = 0.0
+        if self._risk_free_bucket is not None:
+            rf = float(er.get(self._risk_free_bucket, 0.0))
+        self._diagnostics["rf"] = rf
+
         return _OptimizationInputs(
             buckets=buckets,
             expected_returns=er,
             cov=cov,
             lower=lower,
             upper=upper,
+            rf=rf,
         )
 
     def _solve(self, inputs: _OptimizationInputs) -> pd.Series:
@@ -217,7 +231,7 @@ class RiskfolioAdapter(AllocationAdapter):
             model="Classic",
             rm=self._risk_measure,
             obj=self._objective,
-            rf=0.0,
+            rf=inputs.rf,
             l=0.0,
             hist=False,
         )
