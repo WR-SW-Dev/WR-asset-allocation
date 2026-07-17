@@ -62,3 +62,7 @@ configs/investment_summary_manifest_local.yaml
 # Phase 20 / L20 — local study config overlay (live workbook paths + ingestion wiring).
 # DO NOT COMMIT — carries live sheet names and Windows file paths.
 configs/base_local.yaml
+.firecrawl/
+
+# JPM-derived CMA candidate (institutional-only source; regenerate via scripts/build_cma_from_jpm.py)
+configs/cma_jpm.yaml
